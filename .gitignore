@@ -1,0 +1,19 @@
+# Fichiers d'environnement
+.env
+.env.local
+.env.*.local
+
+# Dossiers Git (sous-modules ou dépôts imbriqués)
+.git/
+
+# Fichiers système et OS
+.DS_Store
+Thumbs.db
+
+# Dépendances et environnements virtuels courants
+node_modules/
+venv/
+__pycache__/
+*.pyc
+dist/
+build/
