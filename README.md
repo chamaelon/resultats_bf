@@ -38,5 +38,5 @@ La plateforme **RÉSULTATS-BF** permet aux candidats de consulter leurs résulta
 
 1. Cloner le dépôt sur votre poste :
    ```bash
-   git clone <URL_DU_DEPOT>
+   git clone https://github.com/chamaelon/resultats_bf.git
    cd resultat-bf-vagrant
