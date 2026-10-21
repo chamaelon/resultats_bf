@@ -48,6 +48,28 @@ CONNINFO="host=${MASTER_HOST} port=${PORT_DB} user=$(quote "$PG_REPLICATION_USER
 # Exécute une commande de réplication (protocole physique) sur le maître
 psql_maitre() { psql "${CONNINFO} replication=true" -v ON_ERROR_STOP=1 "$@"; }
 
+# --- Idempotence (R2) : outils communs ---
+SUDO="sudo"
+
+# maj_fichier <destination> <mode> [proprio:groupe]   (contenu lu sur l'entrée standard)
+# N'écrit le fichier QUE si son contenu change (idempotence, exigence R2).
+# Retour : 0 = fichier modifié, 1 = déjà à jour.
+# SUDO vaut "sudo" dans les scripts exécutés en simple utilisateur, vide en root.
+maj_fichier() {
+  local dest="$1" mode="$2" own="${3:-}" tmp
+  tmp=$(mktemp)
+  cat > "$tmp"
+  # shellcheck disable=SC2086
+  if [ -f "$dest" ] && ${SUDO:-} cmp -s "$tmp" "$dest"; then
+    ${SUDO:-} chmod "$mode" "$dest"
+    if [ -n "$own" ]; then ${SUDO:-} chown "$own" "$dest"; fi
+    rm -f "$tmp"; return 1
+  fi
+  ${SUDO:-} install -m "$mode" "$tmp" "$dest"
+  if [ -n "$own" ]; then ${SUDO:-} chown "$own" "$dest"; fi
+  rm -f "$tmp"; return 0
+}
+
 # ==========================================
 # 1. Mise à jour et Installation
 # ==========================================
@@ -95,9 +117,32 @@ echo "   ✅ Le maître accepte les connexions de réplication"
 # ==========================================
 # Idempotence : si ce cluster est déjà un réplica (standby.signal), on ne reclone pas,
 # sauf demande explicite : REPLIQUE_RECLONER=1 vagrant provision bdd2
+#
+# GARDE ANTI-DESTRUCTION : après une bascule (scénario V4), bdd2 est promu : le fichier
+# standby.signal a disparu et la base contient les données. Rejouer ce script reclonerait
+# alors bdd1 PAR-DESSUS bdd2 et détruirait les écritures faites depuis la promotion.
+# Une base neuve (cluster Debian vide) ne contient pas la table : le 1er clonage reste normal.
+PORT_CLUSTER=$(pg_lsclusters -h | awk 'NR==1{print $3}')
+base_promue() {
+  local p r
+  for p in "${PORT_DB}" "${PORT_CLUSTER:-5432}" 5432; do
+    r=$(sudo -u postgres psql -p "$p" -d "${APP_DB}" -tAc "SELECT to_regclass('public.resultat') IS NOT NULL" 2>/dev/null || true)
+    [ "$r" = "t" ] && return 0
+  done
+  return 1
+}
+
+CLONE=0
 if [ -f "${DATADIR}/standby.signal" ] && [ "${REPLIQUE_RECLONER:-0}" != "1" ]; then
   echo "=> Ce serveur est déjà un réplica : pas de reclonage (REPLIQUE_RECLONER=1 pour forcer)."
+elif [ ! -f "${DATADIR}/standby.signal" ] && [ "${REPLIQUE_RECLONER:-0}" != "1" ] && base_promue; then
+  echo "⚠️  ${HOSTNAME} n'est plus un réplica (pas de standby.signal) mais contient la table resultat :"
+  echo "    il a sans doute été promu (bascule). Reclonage REFUSÉ pour ne pas détruire ses données."
+  echo "    Pour le refaire réplica de l'ACTUEL primaire : REPLIQUE_RECLONER=1 vagrant provision ${HOSTNAME}"
+  echo "    (le maître visé est lu dans noeuds.yml : bdd1). Aucune modification effectuée."
+  exit 0
 else
+  CLONE=1
   echo "=> Arrêt de PostgreSQL et purge du cluster local (initialisé indépendamment du maître)..."
   sudo systemctl stop "${UNITE}" || true
   sudo find "${DATADIR}" -mindepth 1 -delete
@@ -116,27 +161,48 @@ fi
 # ==========================================
 echo "=> Configuration du réplica (conf.d + pg_hba.conf)..."
 sudo mkdir -p "${CONF_DIR}/conf.d"
-sudo tee "${CONF_DIR}/conf.d/50-replique.conf" > /dev/null <<EOF
+CONF_MODIFIEE=0
+if maj_fichier "${CONF_DIR}/conf.d/50-replique.conf" 0644 <<EOF
 # Généré par replique.sh
 listen_addresses = '*'
 port = ${PORT_DB}
 hot_standby = on             # lectures autorisées sur le réplica
 hot_standby_feedback = on    # évite l'annulation des requêtes longues par le maître
 EOF
+then CONF_MODIFIEE=1; fi
 
 # pg_hba.conf n'est pas copié par pg_basebackup (il est dans /etc) : on le renseigne ici.
 PGHBA="${CONF_DIR}/pg_hba.conf"
-sudo sed -i "/# resultats-bf : début/,/# resultats-bf : fin/d" "${PGHBA}"
+# Bloc reconstruit puis comparé : pg_hba.conf n'est réécrit que s'il change.
+HBA_NOUVEAU=$(mktemp)
+# shellcheck disable=SC2024   # redirection volontairement faite en simple utilisateur (fichier temporaire)
+sudo sed "/# resultats-bf : début/,/# resultats-bf : fin/d" "${PGHBA}" > "$HBA_NOUVEAU"
 {
   echo "# resultats-bf : début"
   echo "host    ${APP_DB}      ${APP_USER}                 ${APP_NETWORK}        md5"
   echo "host    replication       ${PG_REPLICATION_USER}     ${REPLICA_NETWORK}    md5"
   echo "# resultats-bf : fin"
-} | sudo tee -a "${PGHBA}" > /dev/null
+} >> "$HBA_NOUVEAU"
+HBA_MODIFIE=0
+if ! sudo cmp -s "$HBA_NOUVEAU" "${PGHBA}"; then
+  sudo tee "${PGHBA}" < "$HBA_NOUVEAU" > /dev/null    # tee conserve propriétaire et droits
+  HBA_MODIFIE=1
+fi
+rm -f "$HBA_NOUVEAU"
 
 echo "=> Démarrage de PostgreSQL..."
 sudo systemctl enable "${UNITE}" > /dev/null 2>&1 || true
-sudo systemctl restart "${UNITE}"
+# Redémarrage seulement après un clonage, un changement de paramètres, ou si le service est
+# arrêté ; un simple changement de pg_hba.conf ne demande qu'un rechargement.
+if [ "$CLONE" -eq 1 ] || [ "$CONF_MODIFIEE" -eq 1 ] || ! sudo systemctl is-active --quiet "${UNITE}"; then
+  sudo systemctl restart "${UNITE}"
+  echo "   PostgreSQL (re)démarré"
+elif [ "$HBA_MODIFIE" -eq 1 ]; then
+  sudo systemctl reload "${UNITE}"
+  echo "   pg_hba.conf rechargé (sans redémarrage)"
+else
+  echo "   configuration inchangée : aucun redémarrage"
+fi
 
 for _ in $(seq 1 60); do
   if sudo -u postgres pg_isready -q -p "${PORT_DB}"; then break; fi
