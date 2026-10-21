@@ -172,3 +172,19 @@ else
     echo "⚠️️ AVERTISSEMENT : La table '${PGTABLE}' n'existe pas. Impossible de vérifier les données."
 fi
 
+# ==========================================
+# 8. Vérifications (non bloquantes)
+# ==========================================
+echo "=> Vérification de la connexion applicative (TCP + mot de passe)..."
+if PGPASSWORD="${PGPASSWORD}" psql -h 127.0.0.1 -p "${PORT_DB}" -U "${PGUSER}" -d "${PGDATABASE}" -tAc "SELECT 'ok'" >/dev/null 2>&1; then
+  echo "   ✅ Connexion ${PGUSER}@${PGDATABASE} OK"
+else
+  echo "   ⚠️  Connexion applicative en échec (voir /var/log/postgresql/)"
+fi
+echo "   Écoute réseau :"; ss -ltn | grep ":${PORT_DB} " || true
+
+echo "==================================================="
+echo "✅ Serveur de Base de Données prêt !"
+echo "Base : ${PGDATABASE} | Port : ${PORT_DB} | Accès autorisé depuis : ${APP_NETWORK}"
+echo "Réplication autorisée pour l'utilisateur : ${PG_REPLICATION_USER}"
+echo "==================================================="
