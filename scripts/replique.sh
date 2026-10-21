@@ -90,3 +90,56 @@ if [ "$MAITRE_OK" -ne 1 ]; then
 fi
 echo "   ✅ Le maître accepte les connexions de réplication"
 
+# ==========================================
+# 5. Clonage du maître (pg_basebackup)
+# ==========================================
+# Idempotence : si ce cluster est déjà un réplica (standby.signal), on ne reclone pas,
+# sauf demande explicite : REPLIQUE_RECLONER=1 vagrant provision bdd2
+if [ -f "${DATADIR}/standby.signal" ] && [ "${REPLIQUE_RECLONER:-0}" != "1" ]; then
+  echo "=> Ce serveur est déjà un réplica : pas de reclonage (REPLIQUE_RECLONER=1 pour forcer)."
+else
+  echo "=> Arrêt de PostgreSQL et purge du cluster local (initialisé indépendamment du maître)..."
+  sudo systemctl stop "${UNITE}" || true
+  sudo find "${DATADIR}" -mindepth 1 -delete
+
+  # Slot éventuellement laissé par un clonage précédent (inactif car ce serveur est arrêté)
+  psql_maitre -c "DROP_REPLICATION_SLOT ${SLOT_NAME}" >/dev/null 2>&1 || true
+
+  echo "=> Copie de base depuis le maître (pg_basebackup)... Cela peut prendre un moment."
+  # -R : crée standby.signal + primary_conninfo ; -C -S : crée le slot ; -X stream : WAL en flux
+  sudo -u postgres pg_basebackup -d "${CONNINFO}" -D "${DATADIR}" \
+    -X stream -C -S "${SLOT_NAME}" -R -v
+fi
+
+# ==========================================
+# 6. Configuration du réplica
+# ==========================================
+echo "=> Configuration du réplica (conf.d + pg_hba.conf)..."
+sudo mkdir -p "${CONF_DIR}/conf.d"
+sudo tee "${CONF_DIR}/conf.d/50-replique.conf" > /dev/null <<EOF
+# Généré par replique.sh
+listen_addresses = '*'
+port = ${PORT_DB}
+hot_standby = on             # lectures autorisées sur le réplica
+hot_standby_feedback = on    # évite l'annulation des requêtes longues par le maître
+EOF
+
+# pg_hba.conf n'est pas copié par pg_basebackup (il est dans /etc) : on le renseigne ici.
+PGHBA="${CONF_DIR}/pg_hba.conf"
+sudo sed -i "/# resultats-bf : début/,/# resultats-bf : fin/d" "${PGHBA}"
+{
+  echo "# resultats-bf : début"
+  echo "host    ${APP_DB}      ${APP_USER}                 ${APP_NETWORK}        md5"
+  echo "host    replication       ${PG_REPLICATION_USER}     ${REPLICA_NETWORK}    md5"
+  echo "# resultats-bf : fin"
+} | sudo tee -a "${PGHBA}" > /dev/null
+
+echo "=> Démarrage de PostgreSQL..."
+sudo systemctl enable "${UNITE}" > /dev/null 2>&1 || true
+sudo systemctl restart "${UNITE}"
+
+for _ in $(seq 1 60); do
+  if sudo -u postgres pg_isready -q -p "${PORT_DB}"; then break; fi
+  sleep 1
+done
+
