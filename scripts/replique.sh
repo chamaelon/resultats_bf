@@ -64,3 +64,29 @@ sudo ufw allow from "${APP_NETWORK}" to any port "${PORT_DB}" proto tcp
 sudo ufw allow from "${REPLICA_NETWORK}" to any port "${PORT_DB}" proto tcp
 sudo ufw --force enable
 
+# ==========================================
+# 3. Informations sur le cluster local (Debian/Ubuntu)
+# ==========================================
+# Colonnes de pg_lsclusters : Ver Cluster Port Status Owner Data-directory Log
+read -r PG_VER PG_CLUSTER _ _ _ DATADIR _ < <(pg_lsclusters -h)
+UNITE="postgresql@${PG_VER}-${PG_CLUSTER}"
+CONF_DIR="/etc/postgresql/${PG_VER}/${PG_CLUSTER}"
+echo "Cluster local : ${PG_VER}/${PG_CLUSTER} (${DATADIR})"
+
+# ==========================================
+# 4. Attente du maître et test des accès de réplication
+# ==========================================
+echo "=> Attente du maître ${MASTER_HOST}:${PORT_DB} (bdd1 doit être provisionnée)..."
+MAITRE_OK=0
+for _ in $(seq 1 60); do
+  if psql_maitre -tAc "IDENTIFY_SYSTEM" >/dev/null 2>&1; then MAITRE_OK=1; break; fi
+  sleep 2
+done
+if [ "$MAITRE_OK" -ne 1 ]; then
+  echo "❌ Connexion de réplication impossible vers le maître. Détail :" >&2
+  psql_maitre -tAc "IDENTIFY_SYSTEM" >&2 || true
+  echo "   Vérifiez : 'vagrant up bdd1', le rôle ${PG_REPLICATION_USER}, pg_hba.conf et le pare-feu du maître." >&2
+  exit 1
+fi
+echo "   ✅ Le maître accepte les connexions de réplication"
+
