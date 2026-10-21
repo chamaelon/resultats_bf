@@ -118,3 +118,57 @@ EXCEPTION WHEN duplicate_object THEN
 END \$\$;
 SQL
 
+# ==========================================
+# 6. Création de la base et application du schéma
+# ==========================================
+psql_postgres() { sudo -u postgres psql -p "${PORT_DB}" -v ON_ERROR_STOP=1 "$@"; }
+psql_base()     { psql_postgres -d "${PGDATABASE}" "$@"; }
+
+echo "=> Vérification et création de la base de données '${PGDATABASE}'..."
+DB_EXISTS=$(psql_postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${PGDATABASE}'")
+if [ "$DB_EXISTS" != "1" ]; then
+  sudo -u postgres createdb -p "${PORT_DB}" -O "${PGUSER}" "${PGDATABASE}"
+fi
+
+table_existe() {
+  psql_base -tAc "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '${PGTABLE}');"
+}
+
+# le schéma n'est appliqué que si la table n'existe pas
+if [ "$(table_existe)" != "t" ]; then
+  if [ -f "$FICHIER_SCHEMA" ]; then
+    echo "==> Application du schéma (${FICHIER_SCHEMA})..."
+    psql_base -f "$FICHIER_SCHEMA"
+  else
+    echo "⚠️ AVERTISSEMENT : Fichier de schéma introuvable ($FICHIER_SCHEMA)"
+  fi
+else
+  echo "==> Table '${PGTABLE}' déjà présente : schéma non réappliqué."
+fi
+
+echo "==> Attribution des droits sur le schéma public..."
+psql_base -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${PGUSER};"
+psql_base -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${PGUSER};"
+psql_base -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${PGUSER};"
+
+# ==========================================
+# 7. Peuplement de la base de données (Data)
+# ==========================================
+# Vérifie si la table existe avant de compter pour éviter une erreur SQL
+if [ "$(table_existe)" = "t" ]; then
+    NB_LIGNES=$(psql_base -tAc "SELECT count(*) FROM ${PGTABLE};")
+
+    if [ "$NB_LIGNES" -eq 0 ]; then
+      if [ -f "$FICHIER_DONNEES" ]; then
+          echo "==> Peuplement de la base (${FICHIER_DONNEES})... Cela peut prendre un moment."
+          psql_base -f "$FICHIER_DONNEES"
+      else
+          echo "⚠️ AVERTISSEMENT : Fichier de données introuvable ($FICHIER_DONNEES)"
+      fi
+    else
+      echo "==> La base contient déjà ${NB_LIGNES} lignes. Peuplement ignoré (Idempotence respectée)."
+    fi
+else
+    echo "⚠️️ AVERTISSEMENT : La table '${PGTABLE}' n'existe pas. Impossible de vérifier les données."
+fi
+
