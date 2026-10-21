@@ -44,3 +44,19 @@ PG_REPLICATION_PASSWORD="${PG_REPLICATION_PASSWORD:-postgres}"
 # Autres variables (ex: pour Keepalived / VIP)
 VRRP_AUTH_PASS="${VRRP_AUTH_PASS:-postgres}"
 
+# ==========================================
+# 1. Mise à jour et Installation
+# ==========================================
+echo "=> Mise à jour des paquets et installation..."
+sudo apt-get update -y
+sudo apt-get install -y postgresql postgresql-contrib ufw
+
+# ==========================================
+# 2. Configuration du Pare-feu (UFW)
+# ==========================================
+echo "=> Configuration du pare-feu UFW..."
+sudo ufw allow ssh
+sudo ufw allow from "${APP_NETWORK}" to any port "${PORT_DB}" proto tcp
+sudo ufw allow from "${REPLICA_NETWORK}" to any port "${PORT_DB}" proto tcp
+sudo ufw --force enable
+
