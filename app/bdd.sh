@@ -18,8 +18,8 @@ fi
 # ==========================================
 # Chemins d'accès
 DOSSIER_SOURCE="${DOSSIER_SOURCE:-/vagrant/app/database}"
-FICHIER_SCHEMA="${FICHIER_SCHEMA:-$DOSSIER_SOURCE/schemas/resultats.sql}"
-FICHIER_DONNEES="${FICHIER_DONNEES:-$DOSSIER_SOURCE/schemas/data.sql}"
+FICHIER_SCHEMA="${FICHIER_SCHEMA:-$DOSSIER_SOURCE/resultats.sql}"
+FICHIER_DONNEES="${FICHIER_DONNEES:-$DOSSIER_SOURCE/data.sql}"
 
 # Paramètres réseau
 PORT_DB="${PG_PORT:-5432}"
