@@ -60,3 +60,61 @@ sudo ufw allow from "${APP_NETWORK}" to any port "${PORT_DB}" proto tcp
 sudo ufw allow from "${REPLICA_NETWORK}" to any port "${PORT_DB}" proto tcp
 sudo ufw --force enable
 
+# ==========================================
+# 3. Configuration de PostgreSQL (Idempotent via SQL)
+# ==========================================
+# Port réellement utilisé AVANT redémarrage (5432 au 1er passage, PORT_DB aux suivants)
+PORT_ACTUEL=$(pg_lsclusters -h | awk 'NR==1{print $3}')
+PORT_ACTUEL="${PORT_ACTUEL:-5432}"
+
+echo "=> Configuration des paramètres du serveur (ALTER SYSTEM)..."
+sudo -u postgres psql -p "${PORT_ACTUEL}" -v ON_ERROR_STOP=1 <<SQL
+ALTER SYSTEM SET listen_addresses = '*';
+ALTER SYSTEM SET port = '${PORT_DB}';
+-- Prérequis pour la réplication en flux
+ALTER SYSTEM SET wal_level = 'replica';
+ALTER SYSTEM SET max_wal_senders = '10';
+ALTER SYSTEM SET max_replication_slots = '10';
+ALTER SYSTEM SET hot_standby = 'on';
+SQL
+
+# ==========================================
+# 4. Configuration des accès réseau (pg_hba.conf)
+# ==========================================
+echo "=> Configuration des autorisations réseau (pg_hba.conf)..."
+PGHBA=$(sudo -u postgres psql -p "${PORT_ACTUEL}" -tAc "SHOW hba_file;" | tr -d ' ')
+
+sudo sed -i "/# resultats-bf : début/,/# resultats-bf : fin/d" "${PGHBA}"
+{
+  echo "# resultats-bf : début"
+  echo "host    ${PGDATABASE}      ${PGUSER}                 ${APP_NETWORK}        md5"
+  echo "host    replication       ${PG_REPLICATION_USER}     ${REPLICA_NETWORK}    md5"
+  echo "# resultats-bf : fin"
+} | sudo tee -a "${PGHBA}" > /dev/null
+
+echo "=> Redémarrage de PostgreSQL pour appliquer la configuration..."
+sudo systemctl restart postgresql
+# Attente active (remplace le "sleep 2") que le service réponde sur le nouveau port
+for _ in $(seq 1 30); do
+  if sudo -u postgres pg_isready -q -p "${PORT_DB}"; then break; fi
+  sleep 1
+done
+
+# ==========================================
+# 5. Création des Rôles (Applicatif et Réplication)
+# ==========================================
+echo "=> Configuration des rôles PostgreSQL..."
+sudo -u postgres psql -p "${PORT_DB}" -v ON_ERROR_STOP=1 <<SQL
+DO \$\$ BEGIN
+  CREATE ROLE ${PGUSER} LOGIN PASSWORD '${PGPASSWORD}';
+EXCEPTION WHEN duplicate_object THEN
+  ALTER ROLE ${PGUSER} PASSWORD '${PGPASSWORD}';
+END \$\$;
+
+DO \$\$ BEGIN
+  CREATE ROLE ${PG_REPLICATION_USER} REPLICATION LOGIN PASSWORD '${PG_REPLICATION_PASSWORD}';
+EXCEPTION WHEN duplicate_object THEN
+  ALTER ROLE ${PG_REPLICATION_USER} PASSWORD '${PG_REPLICATION_PASSWORD}';
+END \$\$;
+SQL
+
