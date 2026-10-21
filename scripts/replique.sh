@@ -143,3 +143,37 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 
+# ==========================================
+# 7. Vérifications (non bloquantes)
+# ==========================================
+psql_local() { sudo -u postgres psql -p "${PORT_DB}" -tAc "$1"; }
+
+echo "=> Vérification de la réplication..."
+EN_RECOVERY=$(psql_local "SELECT pg_is_in_recovery();" 2>/dev/null || echo "?")
+if [ "$EN_RECOVERY" = "t" ]; then
+  echo "   ✅ Mode réplica actif (pg_is_in_recovery = true)"
+else
+  echo "   ⚠️  Ce serveur n'est pas en mode réplica (valeur : ${EN_RECOVERY})"
+fi
+
+STATUT="?"
+for _ in $(seq 1 30); do
+  STATUT=$(psql_local "SELECT status FROM pg_stat_wal_receiver;" 2>/dev/null || echo "?")
+  [ "$STATUT" = "streaming" ] && break
+  sleep 1
+done
+if [ "$STATUT" = "streaming" ]; then
+  echo "   ✅ Réception des WAL en flux depuis ${MASTER_HOST} (streaming)"
+else
+  echo "   ⚠️  WAL receiver : '${STATUT}' — voir : sudo journalctl -u ${UNITE} -n 50"
+fi
+
+NB=$(sudo -u postgres psql -p "${PORT_DB}" -d "${APP_DB}" -tAc "SELECT count(*) FROM resultat;" 2>/dev/null || echo "n/a")
+echo "   Lignes de la table 'resultat' répliquées : ${NB}"
+
+echo "==================================================="
+echo "✅ Réplica prêt ! (lecture seule)"
+echo "Maître : ${MASTER_HOST}:${PORT_DB} | Réplica : ${HOSTNAME} | Slot : ${SLOT_NAME}"
+echo "Sur le maître : SELECT client_addr, state, sync_state FROM pg_stat_replication;"
+echo "Promotion manuelle : sudo -u postgres psql -c 'SELECT pg_promote();'"
+echo "==================================================="
