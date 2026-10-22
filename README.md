@@ -1,6 +1,6 @@
 # Plateforme RÉSULTATS-BF
 
-Infrastructure hautement disponible, résiliente et décrite en code (Infrastructure as Code) avec **Vagrant** et **VirtualBox**.
+Infrastructure hautement disponible, résiliente et décrite en code (*Infrastructure as Code*) avec **Vagrant** et **VirtualBox**.
 
 - **Contexte :** Projet de groupe — Master 1 Informatique, Virtualisation et Cloud Computing
 - **Établissement :** Institut Supérieur de l'Informatique et du Management (IBAM), Université Joseph Ki-Zerbo
@@ -19,7 +19,7 @@ La plateforme **RÉSULTATS-BF** permet aux candidats de consulter leurs résulta
 ### Architecture
 
 - **`lb1` :** répartiteur de charge HAProxy avec sonde de santé `/sante`.
-- **`lb2` :** répartiteur de secours avec mécanisme de bascule Keepalived/VRRP (extension E1).
+- **`lb2` :** répartiteur de secours utilisant Keepalived/VRRP pour la bascule (extension E1).
 - **`app1` à `appN` :** serveurs applicatifs.
 - **`bdd1` :** base PostgreSQL primaire.
 - **`bdd2` :** réplica PostgreSQL.
@@ -27,18 +27,26 @@ La plateforme **RÉSULTATS-BF** permet aux candidats de consulter leurs résulta
 - **`obs` :** serveur d'observabilité Prometheus et Grafana (extension E2).
 - **Node Exporter :** collecte des métriques système des machines.
 
-Les rôles et adresses IP sont définis dans `config/noeuds.yml`. Le réseau privé est configuré dans le `Vagrantfile`.
+Les rôles et adresses IP des machines sont définis dans `config/noeuds.yml`, généré par le `Vagrantfile`.
+
+### Réseau privé
+
+Le réseau est calculé à partir du numéro de groupe :
+
+`192.168.(55 + GROUPE).0/24`
+
+Par défaut, `GROUPE=1`, ce qui correspond au réseau `192.168.56.0/24`.
 
 ## 2. Prérequis techniques
 
 Sur la machine hôte :
 
-- VirtualBox compatible avec la version de Vagrant installée.
-- Vagrant.
-- Git pour récupérer le dépôt.
-- Une mémoire vive suffisante pour exécuter les machines virtuelles ; 8 Go ou plus sont recommandés.
+- **VirtualBox**, compatible avec la version de Vagrant installée.
+- **Vagrant**.
+- **Git**, pour récupérer le dépôt.
+- Une mémoire vive suffisante pour exécuter les machines virtuelles ; **8 Go ou plus sont recommandés**.
 
-La box Vagrant utilisée est `bento/ubuntu-24.04`.
+La box Vagrant utilisée est `bento/ubuntu-24.04`, version `202404.26.0`.
 
 ## 3. Récupération du projet
 
@@ -49,18 +57,31 @@ git clone https://github.com/chamaelon/resultats_bf.git
 cd resultats_bf
 ```
 
-## 4. Configuration et démarrage
+## 4. Configuration de l'environnement
 
-1. Vérifier le `Vagrantfile` et `config/noeuds.yml`.
-2. Vérifier les variables d'environnement nécessaires à l'application et utiliser les fichiers d'exemple fournis.
-3. Ne jamais versionner les fichiers `.env` contenant des secrets.
-4. Démarrer les machines :
+Avant de démarrer l'infrastructure :
+
+1. Vérifier le `Vagrantfile` et les paramètres de configuration.
+2. Vérifier les variables d'environnement nécessaires à l'application.
+3. Utiliser les fichiers d'exemple disponibles dans `app/api/`, lorsqu'ils sont fournis, pour préparer la configuration locale.
+4. Ne jamais versionner les fichiers `.env` contenant des secrets.
+
+Les paramètres principaux du `Vagrantfile` sont :
+
+- `GROUPE` : numéro du groupe, compris entre 1 et 8 ; valeur par défaut : `1`.
+- `NB_APP` : nombre de serveurs applicatifs ; valeur par défaut : `2`.
+
+Ces variables peuvent être adaptées selon les besoins du déploiement.
+
+## 5. Démarrage de l'infrastructure
+
+Démarrer les machines :
 
 ```bash
 vagrant up
 ```
 
-Consulter l'état des machines :
+Consulter leur état :
 
 ```bash
 vagrant status
@@ -73,30 +94,36 @@ vagrant destroy -f
 vagrant up
 ```
 
-## 5. Extension E1 — Haute disponibilité du répartiteur
+**Attention :** `vagrant destroy -f` supprime les machines virtuelles gérées par Vagrant et peut entraîner la perte des données qu'elles contiennent.
+
+## 6. Extension E1 — Haute disponibilité du répartiteur
 
 L'extension E1 ajoute `lb2` comme répartiteur de secours. Keepalived/VRRP assure le mécanisme de bascule de l'adresse IP virtuelle selon la configuration déployée.
 
-Le fonctionnement doit être vérifié en arrêtant `lb1` et en contrôlant que le service reste accessible par le mécanisme de secours.
+Le fonctionnement doit être vérifié en arrêtant `lb1` et en contrôlant que le service reste accessible grâce au mécanisme de secours.
 
-## 6. Extension E2 — Observabilité
+Le nœud `lb2` est déclaré facultatif dans le `Vagrantfile` (`required: false`). Son déploiement et son fonctionnement dépendent donc de la configuration retenue.
+
+## 7. Extension E2 — Observabilité
 
 L'extension E2 ajoute un serveur `obs` utilisant :
 
 - **Prometheus :** collecte et stockage des métriques.
-- **Node Exporter :** exposition des métriques système sur le port 9100.
+- **Node Exporter :** exposition des métriques système sur le port `9100`.
 - **Grafana :** visualisation des métriques à l'aide de tableaux de bord.
 
-Adresses prévues sur le réseau privé :
+### Accès aux services
 
-- Prometheus : `http://IP_OBS:9090`
-- Grafana : `http://IP_OBS:3000`
+Les adresses prévues sur le réseau privé sont :
 
-Remplacer `IP_OBS` par l'adresse de la machine `obs` dans `config/noeuds.yml`.
+- **Prometheus :** `http://IP_OBS:9090`
+- **Grafana :** `http://IP_OBS:3000`
 
-La disponibilité des métriques dépend du démarrage des machines et de la configuration des cibles et exporteurs.
+Remplacer `IP_OBS` par l'adresse de la machine `obs` définie dans `config/noeuds.yml`.
 
-## 7. Scénarios de validation V1 à V6
+Les métriques disponibles dépendent du démarrage des machines, de la configuration des cibles Prometheus et de la disponibilité des exporteurs concernés.
+
+## 8. Scénarios de validation V1 à V6
 
 Exécuter les tests sur une infrastructure démarrée. Consigner les commandes, les résultats, les erreurs et les temps de reprise. Les résultats ci-dessous sont des critères de vérification, pas des mesures déjà obtenues.
 
@@ -122,27 +149,29 @@ Pour chaque test, noter :
 
 Ne renseigner aucune mesure avant d'avoir exécuté le test correspondant.
 
-## 8. Vérifications et dépannage
+## 9. Vérifications et dépannage
 
-Commandes utiles :
+### État de l'infrastructure
 
 ```bash
 vagrant status
 ```
 
-Sur une machine Linux, pour vérifier les services concernés :
+### État des services de supervision
+
+Sur la machine `obs` :
 
 ```bash
-systemctl status prometheus-node-exporter
 systemctl status prometheus
 systemctl status grafana-server
+systemctl status prometheus-node-exporter
 ```
 
-Les deux dernières commandes sont destinées à la machine `obs`. Elles ne fonctionneront que si les services correspondants sont installés.
+Ces commandes permettent de vérifier l'état des services concernés lorsqu'ils sont installés.
 
-En cas d'échec, consulter les journaux du service concerné et vérifier la configuration des adresses IP, des ports et des cibles Prometheus.
+En cas d'échec, consulter les journaux du service concerné et vérifier les adresses IP, les ports, les cibles Prometheus et la disponibilité des machines.
 
-## 9. Sécurité et bonnes pratiques
+## 10. Sécurité et bonnes pratiques
 
 - Ne jamais committer de secrets ou de fichiers `.env` personnels.
 - Conserver les fichiers d'exemple nécessaires au déploiement.
