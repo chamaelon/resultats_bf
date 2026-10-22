@@ -1,165 +1,170 @@
-voici:# Plateforme RÉSULTATS-BF
+# Plateforme RÉSULTATS-BF
 
-Infrastructure hautement disponible, résiliente et décrite en code (*Infrastructure as Code*) avec **Vagrant** et **VirtualBox**.
+Infrastructure hautement disponible, résiliente et entièrement décrite en code (Infrastructure as Code) avec **Vagrant** et **VirtualBox**.
 
-- **Contexte :** Projet de groupe — Master 1 Informatique, Virtualisation et Cloud Computing
-- **Établissement :** Institut Supérieur de l'Informatique et du Management (IBAM), Université Joseph Ki-Zerbo
-- **Enseignant :** Dr SOMDA Flavien Hervé
-- **Année universitaire :** 2026-2027
+* **Contexte :** Projet de groupe - Master 1 Informatique / Virtualisation et Cloud Computing
+* **Établissement :** Institut Supérieur de Informatique et de Management (IBAM), Université Joseph Ki Zerbo
+* **Enseignant :** Dr SOMDA Flavien Hervé
+* **Année universitaire :** 2026-2027
 
 ---
 
 ## 1. Vue d'ensemble du projet
 
-La plateforme **RÉSULTATS-BF** permet aux candidats de consulter leurs résultats d'examens par numéro de matricule. L'architecture vise deux objectifs principaux :
+La plateforme **RÉSULTATS-BF** permet aux candidats de consulter leurs résultats d'examens par numéro de matricule. L'architecture a été pensée pour répondre à deux impératifs non fonctionnels majeurs :
 
-1. **Résilience :** maintenir le service malgré certaines pannes de composants.
-2. **Scalabilité :** permettre l'ajout de serveurs applicatifs sans réécrire toute la configuration.
+1. **La résilience :** Le système continue de fonctionner malgré la panne d'un composant (serveur applicatif ou base de données).
+2. **La scalabilité :** L'absorption d'un pic de trafic s'effectue horizontalement par simple ajout de serveurs, sans réécriture de la configuration.
 
-### Architecture
+### Architecture Cible (Socle Obligatoire + Extensions)
 
-- **`lb1` :** répartiteur de charge HAProxy avec sonde de santé `/sante`.
-- **`lb2` :** répartiteur de secours utilisant Keepalived/VRRP pour la bascule (extension E1).
-- **`app1` à `appN` :** serveurs applicatifs.
-- **`bdd1` :** base PostgreSQL primaire.
-- **`bdd2` :** réplica PostgreSQL.
-- **`cache` :** service de cache défini dans la configuration.
-- **`obs` :** serveur d'observabilité Prometheus et Grafana (extension E2).
-- **Node Exporter :** collecte des métriques système des machines.
+* **Répartition de charge (`lb1`) :** HAProxy configuré dynamiquement avec une sonde de santé (`/sante`).
+* **Répartiteur de secours (`lb2`) :** HAProxy et Keepalived/VRRP assurent le mécanisme de bascule en cas de panne de `lb1` (extension E1).
+* **Serveurs applicatifs (`app1` à `appN`) :** Services stateless (Python/Node.js) répartis sur un réseau privé.
+* **Base de données (`bdd1` & `bdd2`) :** PostgreSQL avec un nœud primaire en lecture/écriture (`bdd1`) et une réplique en flux (`bdd2`).
+* **Cache (`cache`) :** Machine dédiée au service de cache.
+* **Supervision (`obs`) :** Serveur de supervision avec Prometheus et Grafana (extension E2).
+* **Réseau privé :** Sous-réseau `192.168.5X.0/24` (où `X = 55 + numéro de groupe`).
 
-Les rôles et adresses IP des machines sont définis dans `config/noeuds.yml`, généré par le `Vagrantfile`.
+Les rôles et les adresses IP des machines sont définis dans `config/noeuds.yml`.
 
-### Réseau privé
-
-Le réseau est calculé à partir du numéro de groupe :
-
-`192.168.(55 + GROUPE).0/24`
-
-Par défaut, `GROUPE=1`, ce qui correspond au réseau `192.168.56.0/24`.
+---
 
 ## 2. Prérequis techniques
 
-Sur la machine hôte :
+* **Outils requis sur la machine hôte :**
+  * [VirtualBox](https://www.virtualbox.org/) (version 6.1 ou supérieure)
+  * [Vagrant](https://www.vagrantup.com/) (version 2.2 ou supérieure)
+  * Git
+* **Configuration matérielle recommandée :**
+  * 8 Go de RAM minimum sur l'hôte (les extensions peuvent nécessiter davantage de mémoire).
+* **Box Vagrant utilisée :** `bento/ubuntu-24.04` (version épinglée `202404.26.0`).
 
-- **VirtualBox**, compatible avec la version de Vagrant installée.
-- **Vagrant**.
-- **Git**, pour récupérer le dépôt.
-- Une mémoire vive suffisante pour exécuter les machines virtuelles ; **8 Go ou plus sont recommandés**.
+---
 
-La box Vagrant utilisée est `bento/ubuntu-24.04`, version `202404.26.0`.
+## 3. Configuration de l'environnement
 
-## 3. Récupération du projet
+1. Cloner le dépôt sur votre poste :
 
-Cloner le dépôt :
+   ```bash
+   git clone https://github.com/chamaelon/resultats_bf.git
+   cd resultats_bf
+   ```
 
-```bash
-git clone https://github.com/chamaelon/resultats_bf.git
-cd resultats_bf
-```
+2. Vérifier le `Vagrantfile` et le fichier `config/noeuds.yml` afin de confirmer le numéro de groupe et les adresses IP utilisées.
 
-## 4. Configuration de l'environnement
+3. Démarrer l'infrastructure :
 
-Avant de démarrer l'infrastructure :
+   ```bash
+   vagrant up
+   ```
 
-1. Vérifier le `Vagrantfile` et les paramètres de configuration.
-2. Vérifier les variables d'environnement nécessaires à l'application.
-3. Utiliser les fichiers d'exemple disponibles dans `app/api/`, lorsqu'ils sont fournis, pour préparer la configuration locale.
-4. Ne jamais versionner les fichiers `.env` contenant des secrets.
+4. Vérifier l'état des machines virtuelles :
 
-Les paramètres principaux du `Vagrantfile` sont :
+   ```bash
+   vagrant status
+   ```
 
-- `GROUPE` : numéro du groupe, compris entre 1 et 8 ; valeur par défaut : `1`.
-- `NB_APP` : nombre de serveurs applicatifs ; valeur par défaut : `2`.
-
-Ces variables peuvent être adaptées selon les besoins du déploiement.
-
-## 5. Démarrage de l'infrastructure
-
-Démarrer les machines :
+Le nœud `lb2` est déclaré facultatif (`required: false`). Il peut être démarré explicitement avec :
 
 ```bash
-vagrant up
+vagrant up lb2
 ```
 
-Consulter leur état :
-
-```bash
-vagrant status
-```
-
-Pour reconstruire l'infrastructure depuis zéro, uniquement si la suppression des machines et de leurs données locales est acceptable :
+**Attention :** la commande suivante détruit les machines virtuelles gérées par Vagrant et peut entraîner la perte des données qu'elles contiennent. Ne l'exécuter que si la reconstruction est autorisée.
 
 ```bash
 vagrant destroy -f
 vagrant up
 ```
 
-**Attention :** `vagrant destroy -f` supprime les machines virtuelles gérées par Vagrant et peut entraîner la perte des données qu'elles contiennent.
+---
 
-## 6. Extension E1 — Haute disponibilité du répartiteur
+## 4. Extension E1 — Haute disponibilité du répartiteur
 
-L'extension E1 ajoute `lb2` comme répartiteur de secours. Keepalived/VRRP assure le mécanisme de bascule de l'adresse IP virtuelle selon la configuration déployée.
+L'extension E1 ajoute `lb2` comme répartiteur de secours. HAProxy assure la répartition de charge et Keepalived/VRRP gère le mécanisme de bascule selon la configuration déployée.
 
-Le fonctionnement doit être vérifié en arrêtant `lb1` et en contrôlant que le service reste accessible grâce au mécanisme de secours.
+Les tests de `lb1` et `lb2` ont été effectués et le fonctionnement de la bascule a été vérifié.
 
-Le nœud `lb2` est déclaré facultatif dans le `Vagrantfile` (`required: false`). Son déploiement et son fonctionnement dépendent donc de la configuration retenue.
+La validation porte notamment sur :
 
-## 7. Extension E2 — Observabilité
+* le fonctionnement du répartiteur principal `lb1` ;
+* le fonctionnement du répartiteur de secours `lb2` ;
+* l'accessibilité du service lors de l'arrêt du répartiteur principal ;
+* la reprise du service par le répartiteur de secours.
 
-L'extension E2 ajoute un serveur `obs` utilisant :
+---
 
-- **Prometheus :** collecte et stockage des métriques.
-- **Node Exporter :** exposition des métriques système sur le port `9100`.
-- **Grafana :** visualisation des métriques à l'aide de tableaux de bord.
+## 5. Extension E2 — Supervision et observabilité
+
+L'extension E2 ajoute le serveur `obs` afin de superviser les machines et les services de l'infrastructure.
+
+Les composants utilisés sont :
+
+* **Prometheus :** collecte et stockage des métriques.
+* **Node Exporter :** exposition des métriques système des machines.
+* **Grafana :** visualisation des métriques à l'aide de tableaux de bord.
+
+La configuration de Prometheus prévoit une collecte toutes les cinq secondes. Les cibles sont définies à partir de la configuration des nœuds et des exporteurs concernés.
 
 ### Accès aux services
 
-Les adresses prévues sur le réseau privé sont :
+Remplacer `IP_OBS` par l'adresse IP de la machine `obs`, définie dans `config/noeuds.yml`.
 
-- **Prometheus :** `http://IP_OBS:9090`
-- **Grafana :** `http://IP_OBS:3000`
+* **Prometheus :** `http://IP_OBS:9090`
+* **Grafana :** `http://IP_OBS:3000`
 
-Remplacer `IP_OBS` par l'adresse de la machine `obs` définie dans `config/noeuds.yml`.
+La disponibilité des métriques dépend du démarrage des machines, de la configuration des cibles et du fonctionnement des exporteurs.
 
-Les métriques disponibles dépendent du démarrage des machines, de la configuration des cibles Prometheus et de la disponibilité des exporteurs concernés.
+---
 
-## 8. Scénarios de validation V1 à V6
+## 6. Scénarios de validation V1 à V6
 
-Exécuter les tests sur une infrastructure démarrée. Consigner les commandes, les résultats, les erreurs et les temps de reprise. Les résultats ci-dessous sont des critères de vérification, pas des mesures déjà obtenues.
+Les scénarios suivants permettent de vérifier le comportement de l'infrastructure. Les résultats observés doivent être consignés dans un compte rendu de tests.
 
 | Test | Procédure | Vérification attendue |
 |---|---|---|
-| **V1 — Répartition de charge** | Effectuer 20 appels à `/info`. | Observer les serveurs applicatifs sollicités et mesurer la répartition. |
-| **V2 — Panne applicative** | Arrêter `app1` pendant des requêtes. | Vérifier la continuité du service et mesurer la période de dégradation. |
-| **V3 — Montée en charge** | Si ApacheBench est installé, exécuter `ab -n 2000 -c 50`, puis comparer différentes valeurs de `NB_APP`. | Comparer le débit et le nombre d'erreurs. |
-| **V4 — Panne de la base primaire** | Arrêter `bdd1` et observer le comportement de l'application et la procédure de bascule. | Vérifier la disponibilité des données et mesurer le temps de reprise. |
-| **V5 — Reconstruction** | Exécuter `vagrant destroy -f`, puis `vagrant up`, si la destruction est autorisée. | Vérifier la reconstruction et mesurer sa durée. |
-| **V6 — Panne du répartiteur** | Arrêter `lb1`. | Vérifier la disponibilité du service via le mécanisme de secours et mesurer le temps de bascule. |
+| **V1 — Répartition de charge** | Envoyer plusieurs requêtes à l'endpoint `/info` via `lb1`. | Vérifier que les requêtes sont distribuées entre les serveurs applicatifs disponibles. |
+| **V2 — Panne applicative** | Arrêter un serveur applicatif pendant l'envoi de requêtes. | Vérifier que le service reste accessible grâce aux serveurs applicatifs disponibles et relever les erreurs éventuelles. |
+| **V3 — Montée en charge** | Effectuer un test de charge avec ApacheBench. | Relever le débit, le temps de réponse et le nombre de requêtes échouées. |
+| **V4 — Panne de la base primaire** | Arrêter `bdd1` et observer le comportement de l'application et la procédure de reprise prévue. | Vérifier la disponibilité des données et relever les éventuelles interruptions. |
+| **V5 — Reconstruction** | Reconstruire l'infrastructure lorsque cette opération est autorisée. | Vérifier que les machines et les services peuvent être recréés et démarrés correctement. |
+| **V6 — Panne du répartiteur** | Arrêter `lb1` pendant l'envoi de requêtes. | Vérifier la reprise du service par `lb2` et relever le temps de bascule. |
+
+### Exemple de commande pour V3
+
+Remplacer `IP_LB1` par l'adresse IP de `lb1` définie dans `config/noeuds.yml`.
+
+```bash
+ab -n 2000 -c 50 http://IP_LB1/info
+```
+
+Les résultats peuvent être comparés en faisant varier le nombre de serveurs applicatifs, tout en tenant compte des ressources disponibles.
 
 ### Compte rendu des tests
 
-Pour chaque test, noter :
+Pour chaque scénario, consigner :
 
-- la date et les conditions d'exécution ;
-- les commandes exécutées ;
-- le résultat obtenu ;
-- les erreurs ou requêtes perdues ;
-- le temps de reprise ;
-- la conclusion : réussi, échoué ou à reprendre.
+* la date et les conditions d'exécution ;
+* les commandes exécutées ;
+* le résultat obtenu ;
+* les erreurs ou les requêtes perdues ;
+* le temps de reprise, lorsqu'il est mesuré ;
+* la conclusion : réussi, échoué ou à reprendre.
 
-Ne renseigner aucune mesure avant d'avoir exécuté le test correspondant.
+---
 
-## 9. Vérifications et dépannage
+## 7. Vérifications et dépannage
 
-### État de l'infrastructure
+### État des machines virtuelles
 
 ```bash
 vagrant status
 ```
 
-### État des services de supervision
+### Vérification des services de supervision
 
-Sur la machine `obs` :
+Sur la machine `obs`, vérifier l'état des services concernés lorsqu'ils sont installés :
 
 ```bash
 systemctl status prometheus
@@ -167,14 +172,21 @@ systemctl status grafana-server
 systemctl status prometheus-node-exporter
 ```
 
-Ces commandes permettent de vérifier l'état des services concernés lorsqu'ils sont installés.
+### En cas de problème
 
-En cas d'échec, consulter les journaux du service concerné et vérifier les adresses IP, les ports, les cibles Prometheus et la disponibilité des machines.
+* Vérifier l'état des machines virtuelles.
+* Contrôler les adresses IP définies dans `config/noeuds.yml`.
+* Vérifier l'accessibilité des ports utilisés.
+* Contrôler les cibles configurées dans Prometheus.
+* Consulter les journaux du service concerné.
+* Vérifier que les exporteurs sont démarrés et accessibles.
 
-## 10. Sécurité et bonnes pratiques
+---
 
-- Ne jamais committer de secrets ou de fichiers `.env` personnels.
-- Conserver les fichiers d'exemple nécessaires au déploiement.
-- Vérifier les modifications avant de les intégrer à `main`.
-- Effectuer les opérations destructives uniquement lorsque cela est autorisé.
-- Documenter les résultats réellement observés, sans inventer de mesures.
+## 8. Sécurité et bonnes pratiques
+
+* Ne jamais versionner de mots de passe, de secrets ou de fichiers `.env` personnels.
+* Conserver les fichiers d'exemple nécessaires au déploiement.
+* Examiner les modifications avant de les intégrer dans la branche `main`.
+* N'effectuer les opérations destructives que lorsque cela est autorisé.
+* Documenter les résultats réellement observés et ne pas inventer de mesures.
