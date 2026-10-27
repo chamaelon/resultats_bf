@@ -30,8 +30,8 @@ NOEUDS << { nom: "bdd1", ip: "#{RESEAU}.31", mem: 768, role: "bdd",required:true
 # Base de données répliquée
 NOEUDS << { nom: "bdd2", ip: "#{RESEAU}.32", mem: 768, role: "replique",required:true }
 
-# Cache (non optionnel)
-NOEUDS << { nom: "cache", ip: "#{RESEAU}.51", mem: 512, role: "cache",required:true }
+# Cache Redis — Extension E3 (optionnel : vagrant up cache)
+NOEUDS << { nom: "cache", ip: "#{RESEAU}.51", mem: 512, role: "cache", required: false }
 
 # Instances applicatives
 (1..NB_APP).each do |i|
@@ -41,11 +41,11 @@ end
 # Répartiteurs de charge principaux
 NOEUDS << { nom: "lb1", ip: "#{RESEAU}.11", mem: 512, role: "lb", required:true }
 
-# Répartiteur de charge secondaire (optionnel)
-NOEUDS << { nom: "lb2", ip: "#{RESEAU}.12", mem: 512, role: "lb2",required:true }
+# Répartiteur de charge secondaire — Extension E1 (optionnel : vagrant up lb2)
+NOEUDS << { nom: "lb2", ip: "#{RESEAU}.12", mem: 512, role: "lb2", required: false }
 
-# Observation et monitoring (onon ptionnel)
-NOEUDS << { nom: "obs", ip: "#{RESEAU}.41", mem: 768, role: "obs",required:true }
+# Observation et monitoring — Extension E2 (optionnel : vagrant up obs)
+NOEUDS << { nom: "obs", ip: "#{RESEAU}.41", mem: 768, role: "obs", required: false }
 
 
 # Les scripts liront ce fichier dans /vagrant/config/noeuds.yml

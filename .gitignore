@@ -17,6 +17,7 @@ venv/
 __pycache__/
 *.pyc
 dist/
+!app/api/dist/index.js
 build/
 *.zip
 sauvegarde/
