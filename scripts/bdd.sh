@@ -6,20 +6,22 @@ echo " Déploiement de la base de données PostgreSQL (Maître) "
 echo "==================================================="
 
 # --- Variables (.env synchronisé via /vagrant, jamais versionné — R7) ---
-if [ -f /vagrant/app/api/.env ]; then
+for FICHIER_ENV in /vagrant/.env /vagrant/app/api/.env; do
+  if [ -f "$FICHIER_ENV" ]; then
   set -a
   # shellcheck disable=SC1091
-  source <(tr -d '\r' < /vagrant/app/api/.env)
+  source <(tr -d '\r' < "$FICHIER_ENV")
   set +a
-fi
+  fi
+done
 
 # ==========================================
 # 0. CONFIGURATION ET VARIABLES GLOBLALES
 # ==========================================
 # Chemins d'accès
 DOSSIER_SOURCE="${DOSSIER_SOURCE:-/vagrant/app/database}"
-FICHIER_SCHEMA="${FICHIER_SCHEMA:-$DOSSIER_SOURCE/schemas/resultats.sql}"
-FICHIER_DONNEES="${FICHIER_DONNEES:-$DOSSIER_SOURCE/schemas/data.sql}"
+FICHIER_SCHEMA="${FICHIER_SCHEMA:-$DOSSIER_SOURCE/schema.sql}"
+FICHIER_DONNEES="${FICHIER_DONNEES:-$DOSSIER_SOURCE/data.sql}"
 
 # Paramètres réseau
 PORT_DB="${PG_PORT:-5432}"
@@ -34,15 +36,17 @@ REPLICA_NETWORK="${REPLICA_NETWORK:-$RESEAU}"  # nœuds réplicas
 # CORRECTION : PG_DB du .env était ignoré (seul PGDATABASE était lu)
 PGDATABASE="${PG_DB:-${PGDATABASE:-postgres}}"
 PGUSER="${PG_USER:-postgres}"
-PGPASSWORD="${PG_PASSWORD:-postgres}"
-PGTABLE="resultat"  # Nom de la table principale (pour peuplement)
+: "${PG_PASSWORD:?PG_PASSWORD absent : définissez-le dans le .env à la racine du dépôt}"
+PGPASSWORD="$PG_PASSWORD"
+PGTABLE="resultats"  # Table attendue par l'API et le sujet
 
 # Identifiants (Réplication)
 PG_REPLICATION_USER="${PG_REPLICATION_USER:-replicateur}"
-PG_REPLICATION_PASSWORD="${PG_REPLICATION_PASSWORD:-postgres}"
+if [ -z "${PG_REPLICATION_PASSWORD:-}" ]; then
+  PG_REPLICATION_PASSWORD=$(printf '%s' "PG_REPLICATION_PASSWORD:$PG_PASSWORD" | sha256sum | cut -c1-32)
+fi
 
 # Autres variables (ex: pour Keepalived / VIP)
-VRRP_AUTH_PASS="${VRRP_AUTH_PASS:-postgres}"
 
 # ==========================================
 # 1. Mise à jour et Installation

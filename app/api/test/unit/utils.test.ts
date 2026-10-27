@@ -11,20 +11,20 @@ describe("Test unitaire pour MockDatabase", () => {
 
 	test("Devrait retourner un tableau vide si aucune donnée n'est présente", async () => {
 		const result = await mockDb.query(
-			"SELECT * FROM resultat WHERE matricule_candidat = $1",
+			"SELECT * FROM resultats WHERE matricule = $1",
 			["12345"]
 		);
 		expect(result).toEqual({ rows: [], rowCount: 0 });
 	});
 
 	test("Devrait retourner la ligne correspondant au matricule fourni", async () => {
-		mockDb.addData("resultat", [{ matricule_candidat: "12345", score: 85 }]);
+		mockDb.addData("resultats", [{ matricule: "12345", moyenne: 17 }]);
 		const result = await mockDb.query(
-			"SELECT * FROM resultat WHERE matricule_candidat = $1",
+			"SELECT * FROM resultats WHERE matricule = $1",
 			["12345"]
 		);
 		expect(result.rowCount).toBe(1);
-		expect(result.rows[0].score).toBe(85);
+		expect(result.rows[0].moyenne).toBe(17);
 	});
 
 	test("Devrait rejeter la requête si la base est indisponible", async () => {
