@@ -138,7 +138,7 @@ function Wait-Serveurs([int]$N, [int]$TimeoutS = 120) {
 function Get-Matricule {
   $m = Get-Env 'MATRICULE' ''
   if (-not $m) {
-    $q = "sudo -u postgres psql -p $($script:PgPort) -d $($script:PgDb) -tAc 'SELECT matricule_candidat FROM resultat ORDER BY 1 LIMIT 1'"
+    $q = "sudo -u postgres psql -p $($script:PgPort) -d $($script:PgDb) -tAc 'SELECT matricule FROM resultats ORDER BY 1 LIMIT 1'"
     $m = ((Invoke-Vm 'bdd1' $q) -split "`n" | Select-Object -First 1).Trim()
   }
   return $m
@@ -175,7 +175,7 @@ function Stop-Sondes($S) {
   return @($entrees | Sort-Object T)
 }
 
-# Analyse d'un journal de sondes, T0 = instant de la panne (ms). Mêmes définitions que lib.sh :
+# Analyse d'un journal de sondes après le début de l'arrêt, T0 = première erreur HTTP observée (ms).
 #  FirstS/LastS : première/dernière erreur après T0 ; GapS : plus longue période SANS aucune réponse 2xx ;
 #  Late : erreurs plus de 5 s après T0 ; Open : le service n'est pas revenu à la fin.
 function Get-Analyse($Entrees, [long]$T0) {
@@ -211,16 +211,25 @@ $sondes = Start-Sondes $url $Travailleurs 0.05 2
 Say "  régime établi pendant $Avant s..."; Start-Sleep -Seconds $Avant
 
 Etape 'Panne'
-$t0 = Get-NowMs; Cmd "vagrant halt $AppCible   (T0)"
+$debutArret = Get-NowMs; Cmd "vagrant halt $AppCible"
 [void](Invoke-Vagrant @('halt', $AppCible))
-Say "  commande terminée après $([int](((Get-NowMs) - $t0) / 1000)) s ; observation $Apres s de plus..."; Start-Sleep -Seconds $Apres
-$e = Stop-Sondes $sondes; $a = Get-Analyse $e $t0
-Bloc 'Codes HTTP / serveur (toute la durée)' ((@($e | Group-Object Code, Srv | Sort-Object Name | ForEach-Object { "{0,6} {1}" -f $_.Count, ($_.Name -replace ', ', ' ') })) -join "`n")
-$errs = @($e | Where-Object { $_.Code -lt 200 -or $_.Code -ge 300 } | Select-Object -First 15 | ForEach-Object { "  T0{0:+0.00;-0.00}s  HTTP {1}" -f (($_.T - $t0) / 1000.0), $_.Code })
+$finArret = Get-NowMs
+Say "  commande terminée après $([int](($finArret - $debutArret) / 1000)) s ; observation $Apres s de plus..."; Start-Sleep -Seconds $Apres
+$e = Stop-Sondes $sondes
+$reference = @($e | Where-Object { $_.T -lt $debutArret })
+$apresDebutArret = @($e | Where-Object { $_.T -ge $debutArret })
+$erreursReference = @($reference | Where-Object { $_.Code -lt 200 -or $_.Code -ge 300 })
+$erreurs = @($apresDebutArret | Where-Object { $_.Code -lt 200 -or $_.Code -ge 300 } | Sort-Object T)
+$t0 = if ($erreurs.Count -gt 0) { $erreurs[0].T } else { $finArret }
+$a = Get-Analyse $apresDebutArret $t0
+Bloc 'Codes HTTP / serveur après le début de vagrant halt' ((@($apresDebutArret | Group-Object Code, Srv | Sort-Object Name | ForEach-Object { "{0,6} {1}" -f $_.Count, ($_.Name -replace ', ', ' ') })) -join "`n")
+$errs = @($apresDebutArret | Where-Object { $_.Code -lt 200 -or $_.Code -ge 300 } | Select-Object -First 15 | ForEach-Object { "  T0{0:+0.00;-0.00}s  HTTP {1}" -f (($_.T - $t0) / 1000.0), $_.Code })
 if ($errs.Count -gt 0) { Bloc 'Premières requêtes en erreur' ($errs -join "`n") }
 
 Etape 'Mesures'
-$degradee = 0.0; if ($a.Err -gt 0) { $degradee = [math]::Round([double]$a.LastS - [double]$a.FirstS, 2) }
+$degradee = 0.0
+if ($erreurs.Count -gt 0) { $degradee = [math]::Round(($erreurs[-1].T - $erreurs[0].T) / 1000.0, 2) }
+Mesure 'Erreurs avant vagrant halt (référence)' "$($erreursReference.Count)"
 Mesure 'Requêtes émises' "$($a.Total)"
 Mesure 'Requêtes perdues (non 2xx)' "$($a.Err)   [$(if ($a.Codes) { $a.Codes } else { 'aucune' })]"
 Mesure 'Première / dernière erreur (après T0)' "$($a.FirstS) s / $($a.LastS) s"
@@ -229,6 +238,7 @@ Mesure 'Plus longue indisponibilité totale du service' "$($a.GapS) s"
 Mesure 'Erreurs plus de 5 s après T0' "$($a.Late)"
 Verdict ($a.Late -eq 0) $(if ($a.Late -eq 0) { 'Plus aucune erreur au-delà de 5 s' } else { "$($a.Late) erreur(s) au-delà de 5 s" })
 Verdict (($a.Ok -gt 0) -and ($a.GapS -lt 5)) "Le service est resté disponible (coupure totale max $($a.GapS) s)"
+Verdict ($erreursReference.Count -eq 0) 'Aucune erreur pendant la période de référence avant vagrant halt'
 
 if (-not $NoRestaurer) {
   Etape 'Remise en état'

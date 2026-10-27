@@ -1,291 +1,164 @@
-# RÉSULTATS-BF — Infrastructure résiliente et scalable avec Vagrant
+# RÉSULTATS-BF — infrastructure Vagrant
 
-Projet de groupe du module **DevOps et infrastructures reproductibles** — Master 1 Informatique, IBAM (Institut Burkinabè des Arts et Métiers), Université Joseph KI-ZERBO.
-Enseignant : Dr SOMDA Flavien Hervé — Année universitaire 2026-2027.
+Projet de groupe du module **DevOps et infrastructures reproductibles**,
+Master 1 Informatique, Université Joseph Ki-Zerbo / IBAM, année 2026–2027.
 
-**Dépôt :** https://github.com/chamaelon/resultats_bf
-**Équipe :** 17 — **Numéro réseau attribué (G) :** 7 — **Réseau privé :** `192.168.62.0/24`
+Le projet déploie une API de consultation de résultats sur un réseau privé
+Vagrant. Le groupe configuré dans ce dépôt est le **groupe 7** (`192.168.62.0/24`).
+Les machines et leurs adresses sont générées depuis le [Vagrantfile](Vagrantfile)
+et décrites dans `config/noeuds.yml`.
 
----
+## Architecture
 
-## 1. Présentation
+| Machine(s) | Rôle | Adresse du groupe 7 | Démarrage |
+|---|---|---|---|
+| `bdd1` | PostgreSQL primaire | `192.168.62.31` | obligatoire |
+| `bdd2` | Réplique PostgreSQL en flux | `192.168.62.32` | obligatoire |
+| `app1`…`appN` | API HTTP sans état | `192.168.62.21`… | obligatoire, `NB_APP` configurable |
+| `lb1` | HAProxy et sonde `/sante` | `192.168.62.11` | obligatoire |
+| `lb2` | HAProxy de secours et Keepalived/VRRP (E1) | `192.168.62.12` ; VIP `192.168.62.5` | facultatif |
+| `obs` | Prometheus, Grafana et exporters (E2) | `192.168.62.41` | facultatif |
+| `cache` | Redis (E3) | `192.168.62.51` | facultatif |
 
-La plateforme **RÉSULTATS-BF** permet à un candidat de consulter son résultat d'examen à partir de son numéro de matricule. L'infrastructure répond à deux exigences non fonctionnelles :
+## Synthèse de validation
 
-- **Résilience** : la panne d'une machine n'interrompt pas le service.
-- **Scalabilité** : on absorbe plus de trafic en ajoutant des serveurs, sans réécrire la configuration.
+Le socle a répondu sur `/sante` et `/resultat`, avec 50 000 lignes sur
+chacune des bases et la réplication active. V1 a confirmé une répartition
+10/10 ; V6 a mesuré le basculement de la VIP en 1,56 s. V2 a réussi à deux
+travailleurs, tandis que son essai de stress à dix travailleurs a rencontré
+des erreurs. V3 reste indicatif faute d’Apache Bench, V4 doit être relancé avec
+son contrôle post-bascule corrigé, et V5 n’a pas validé la reconstruction sans
+intervention manuelle. Voir la [synthèse et les limites détaillées](DOSSIER_ARCHITECTURE.md#synthèse-pour-la-soutenance)
+et conserver les [rapports bruts](mesures/) comme preuves.
 
-Toute l'infrastructure est décrite en code (Vagrant + scripts shell) et se reconstruit sur n'importe quel poste avec une seule commande.
+Le socle obligatoire utilise environ 3 Go de RAM. Les extensions sont
+facultatives et se démarrent séparément pour limiter la mémoire consommée.
+L'API expose `GET /resultat?matricule=…`, `GET /sante` et `GET /info`.
+Le schéma SQL définit les champs `matricule`, `nom`, `serie`, `moyenne` et
+`admis` ; `app/database/data.sql` génère 50 000 lignes reproductibles avec
+`generate_series`.
 
----
+## Prérequis
 
-## 2. Architecture
-
-```
-                 Poste hôte  ──  localhost:8080 ──►  lb1:80
-                      │
-                      ▼   IP virtuelle VRRP 192.168.62.5
-          ┌────────────────────────┐
-          │  lb1 (actif)  .11      │   HAProxy + keepalived
-          │  lb2 (secours) .12     │
-          └───────────┬────────────┘
-                      │  HTTP, sonde /sante
-          ┌───────────┴────────────┐
-          │  app1 .21   app2 .22   │   API Node.js sans état
-          │  ...  appN .2N         │
-          └─────┬────────────┬─────┘
-                │            │
-        cache .51 (Redis)    │  SQL 5432
-                      ┌──────┴──────────────┐
-                      │ bdd1 .31 (primaire) │──► bdd2 .32 (réplique en flux)
-                      └─────────────────────┘
-          obs .41 : Prometheus + Grafana (collecte des métriques)
-```
-
-| Machine | Rôle | Adresse | RAM | Statut |
-|---|---|---|---|---|
-| `bdd1` | PostgreSQL primaire (lecture et écriture) | 192.168.62.31 | 768 Mo | Socle |
-| `bdd2` | Réplique en flux, promouvable | 192.168.62.32 | 768 Mo | Socle |
-| `app1` … `appN` | API Node.js sans état (N = `NB_APP`, 2 par défaut) | 192.168.62.21 … .2N | 512 Mo | Socle |
-| `lb1` | Répartiteur HAProxy actif, VRRP MASTER | 192.168.62.11 | 512 Mo | Socle |
-| `lb2` | Répartiteur de secours, VRRP BACKUP | 192.168.62.12 | 512 Mo | Extension E1 |
-| `obs` | Supervision : Prometheus et Grafana | 192.168.62.41 | 768 Mo | Extension E2 |
-| `cache` | Cache Redis des consultations | 192.168.62.51 | 512 Mo | Extension E3 |
-
-**Source unique de vérité :** le `Vagrantfile` décrit les machines et écrit `config/noeuds.yml`. La configuration de HAProxy est **engendrée** à partir de ce fichier : aucune adresse de serveur applicatif n'est écrite en dur.
-
----
-
-## 3. Prérequis
-
-- [VirtualBox](https://www.virtualbox.org/) 7.x
-- [Vagrant](https://www.vagrantup.com/) 2.4 ou plus
 - Git
-- Un poste avec **8 Go de RAM** : les 8 machines utilisent environ 4,8 Go. Fermez les applications lourdes avant de lancer.
-- Une connexion Internet pour le premier lancement : téléchargement de la boîte `bento/ubuntu-24.04` (version épinglée `202404.26.0`) et des paquets.
+- Vagrant 2.4 ou ultérieur
+- VirtualBox compatible avec la version de Vagrant installée
+- 8 Go de RAM recommandés sur l'hôte
 
----
+L'API est compilée dans la VM applicative ; Bun n'est pas requis sur l'hôte.
 
-## 4. Démarrage rapide
+## Installation
 
-### 4.1. Cloner le dépôt
-
-```bash
-git clone https://github.com/chamaelon/resultats_bf.git
-cd resultats_bf
-```
-
-### 4.2. Créer les fichiers de configuration
-
-Les mots de passe ne sont jamais versionnés (exigence R7). Le dépôt contient deux modèles, `.env.exemple`, à copier en `.env` :
-
-Linux / macOS :
-
-```bash
-cp .env.exemple .env
-cp app/api/.env.exemple app/api/.env
-```
-
-Windows (PowerShell) :
+Depuis PowerShell à la racine du dépôt :
 
 ```powershell
-copy .env.exemple .env
-copy app\api\.env.exemple app\api\.env
+Copy-Item .env.exemple .env
 ```
 
-Ouvrez ensuite les deux fichiers `.env` et vérifiez les valeurs :
+Dans `.env`, gardez `GROUPE=7`, vérifiez `NB_APP=2` et remplacez les valeurs
+de démonstration par des mots de passe locaux. Ne versionnez jamais ce fichier.
+Le `.env.exemple` est un modèle, pas un jeu de secrets de production.
 
-| Fichier | Variable | Rôle |
-|---|---|---|
-| `.env` | `GROUPE=7` | Numéro **réseau** G attribué (7), et non le numéro d'équipe (17) : réseau `192.168.(55 + G).0/24`. VirtualBox n'accepte que G de 1 à 8 |
-| `.env` | `NB_APP=2` | Nombre de serveurs applicatifs |
-| `app/api/.env` | `PORT` | Port d'écoute de l'API (80) |
-| `app/api/.env` | `PG_USER`, `PG_PASSWORD`, `PG_PORT`, `PG_DB` | Accès PostgreSQL — **`PG_PASSWORD` est obligatoire** |
-| `app/api/.env` | `REDIS_PORT`, `REDIS_PASSWORD`, `CACHE_TTL`, `CACHE_PREFIX` | Cache Redis |
-| `app/api/.env` | `VRRP_AUTH_PASS` | Mot de passe VRRP de keepalived (**8 caractères maximum**) |
+Démarrez le socle obligatoire :
 
-> Les deux fichiers `.env` sont ignorés par Git. Ne commitez jamais de vrai mot de passe.
-
-### 4.3. Lancer l'infrastructure
-
-```bash
+```powershell
 vagrant up
-```
-
-Le premier lancement prend de 30 à 60 minutes. Les machines sont créées dans cet ordre : `bdd1`, `bdd2`, `cache`, `app1`, `app2`, `lb1`, `lb2`, `obs`. Les bases sont prêtes avant les serveurs applicatifs.
-
-Vérifiez l'état des machines :
-
-```bash
 vagrant status
 ```
 
-Toutes doivent être `running`.
-
-### 4.4. Vérifier que le service répond
-
-Sous Windows, utilisez `curl.exe` et non `curl`.
-
-```bash
-curl http://localhost:8080/info        # nom du serveur qui répond : app1 ou app2, en alternance
-curl http://localhost:8080/sante       # 200 si la base répond, 503 sinon
-curl http://192.168.62.5/info          # même service, via l'IP virtuelle VRRP
-```
-
----
-
-## 5. Accès aux services
-
-| Service | Adresse |
-|---|---|
-| API depuis l'hôte (redirection de port vers `lb1`) | `http://localhost:8080` |
-| API via l'IP virtuelle haute disponibilité | `http://192.168.62.5` |
-| Statistiques HAProxy de `lb1` / `lb2` | `http://192.168.62.11:8404/stats` / `http://192.168.62.12:8404/stats` |
-| Prometheus | `http://192.168.62.41:9090` |
-| Grafana | `http://192.168.62.41:3000` |
-
-Points d'entrée de l'API :
-
-| Point d'entrée | Comportement |
-|---|---|
-| `GET /resultat?matricule=…` | Résultat du candidat au format JSON, lu dans la base (via le cache Redis) |
-| `GET /sante` | 200 si la base répond, 503 sinon. C'est la sonde interrogée par HAProxy |
-| `GET /info` | Nom d'hôte du serveur qui a répondu, pour observer la répartition |
-
----
-
-## 6. Commandes d'exploitation
-
-### 6.1. Ajouter des serveurs applicatifs (exigence R3)
-
-Une seule valeur à changer : `NB_APP`.
-
-Linux / macOS :
-
-```bash
-NB_APP=4 vagrant up
-NB_APP=4 vagrant provision lb1 lb2
-```
-
-Windows (PowerShell) :
+La configuration par défaut n'allume pas les extensions facultatives. Pour
+les extensions E1 et E2 :
 
 ```powershell
-$env:NB_APP="4"; vagrant up
-vagrant provision lb1 lb2
+vagrant up lb2 obs
 ```
 
-`vagrant up` crée `app3` et `app4`. `vagrant provision lb1 lb2` régénère la configuration HAProxy depuis `config/noeuds.yml` : les nouveaux serveurs reçoivent du trafic dès que leur sonde `/sante` répond. Pour rendre le changement permanent, modifiez `NB_APP` dans `.env`.
-
-### 6.2. Bascule de la base de données (exigence R6)
-
-Si `bdd1` tombe, `/sante` renvoie 503 et HAProxy retire les serveurs applicatifs. La bascule vers `bdd2` est **manuelle**, pour éviter deux primaires simultanés (« split-brain ») en cas de simple coupure réseau.
-
-1. Promouvoir la réplique :
-
-   ```bash
-   vagrant ssh bdd2 -c "sudo -u postgres psql -c 'SELECT pg_promote();'"
-   ```
-
-2. Sur chaque serveur applicatif (`app1`, `app2`, …), pointer vers `bdd2` et redémarrer l'API :
-
-   ```bash
-   vagrant ssh app1
-   sudo sed -i 's/192.168.62.31/192.168.62.32/g' /etc/api-app.env
-   echo 192.168.62.32 | sudo tee /etc/api-app.primaire
-   sudo systemctl restart api-app
-   ```
-
-   La ligne `tee` mémorise le nouveau primaire : un futur `vagrant provision` ne repointera pas l'API vers `bdd1`.
-
-3. Vérifier : `curl http://localhost:8080/sante` doit renvoyer 200.
-
-Le script `scripts/validation_scenario_v4` exécute et chronomètre cette procédure. Pour revenir à l'état initial (`bdd1` primaire), reconstruisez la plateforme (section 6.3).
-
-### 6.3. Reconstruction complète (exigence R1)
-
-> ⚠️ Cette commande **supprime toutes les machines** et leurs données.
-
-```bash
-vagrant destroy -f
-vagrant up
-```
-
-### 6.4. Autres commandes utiles
-
-| Commande | Effet |
-|---|---|
-| `vagrant halt app1` | Éteint une machine (simulation de panne) |
-| `vagrant up app1` | La redémarre |
-| `vagrant provision` | Rejoue les scripts ; idempotent (exigence R2), rien ne change au second passage |
-| `vagrant ssh lb1` | Se connecte à une machine |
-| `vagrant status` | État de toutes les machines |
-
----
-
-## 7. Scénarios de validation (V1 à V6)
-
-Chaque scénario a un script prêt dans `scripts/`, en version PowerShell (`.ps1`) et Bash (`.sh`). Lancez-les depuis la racine du dépôt :
+Pour Redis (E3), si vous choisissez également cette extension :
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\validation_scenario_v1.ps1
+vagrant up cache
 ```
 
-```bash
-bash scripts/validation_scenario_v1.sh
+Le nombre d'instances applicatives se règle par `NB_APP` dans `.env`. Par
+exemple, passez-le à `4`, puis exécutez `vagrant up` pour ajouter les nœuds.
+Le répartiteur génère sa liste de serveurs depuis `config/noeuds.yml`.
+
+## Accès aux services
+
+- API via le port transféré de `lb1` : `http://localhost:8080/info`,
+  `http://localhost:8080/sante` et
+  `http://localhost:8080/resultat?matricule=146066W`.
+- Avec E1 démarrée, VIP Keepalived : `http://192.168.62.5/`.
+- Prometheus (E2) : `http://192.168.62.41:9090`.
+- Grafana (E2) : `http://192.168.62.41:3000`.
+- Statistiques HAProxy : `http://192.168.62.11:8404/stats`.
+
+Le port `8080` de l'hôte est transféré par `lb1` uniquement ; pour valider la
+bascule VRRP, utilisez la VIP et le scénario V6 plutôt que `localhost:8080`.
+
+## Scénarios de validation
+
+Les scripts PowerShell créent un rapport horodaté dans `mesures/`. Depuis la
+racine du dépôt, lancez par exemple :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\validation_scenario_v1.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\validation_scenario_v2.ps1 -Travailleurs 2
+powershell -ExecutionPolicy Bypass -File .\scripts\validation_scenario_v3.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\validation_scenario_v4.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\validation_scenario_v5.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\validation_scenario_v6.ps1
 ```
 
-Chaque script produit un rapport dans `mesures/` : commande exacte, résultat brut, mesures, verdict. La section « Commentaire » est à compléter par l'équipe.
+V1–V4 et V6 modifient l'état des VM pendant le test ; V5 détruit puis recrée
+les VM. Lisez le script concerné avant exécution, sauvegardez toute donnée à
+conserver et ne lancez V5 que lorsque la destruction est autorisée.
+Les résultats doivent être contrôlés et commentés après chaque exécution.
+Le rapport V1 final de la campagne est
+[`V1_20261027_180252.md`](mesures/V1_20261027_180252.md).
+V2 a réussi à deux travailleurs ; l'essai de stress à dix travailleurs a
+rencontré des erreurs sur l'hôte de validation. V3 doit être mesuré avec
+Apache Bench (`ab`) : le générateur PowerShell de secours fournit uniquement
+des résultats indicatifs.
 
-| Scénario | Ce qui est testé | Attendu | Mesure relevée |
-|---|---|---|---|
-| **V1** Répartition | 20 appels à `/info` | Les N serveurs apparaissent tour à tour | Écart entre le plus et le moins sollicité (< 20 %) |
-| **V2** Panne d'une app | `vagrant halt app1` pendant une charge | Plus aucune erreur au-delà de 5 s | Requêtes perdues, durée de la période dégradée |
-| **V3** Montée en charge | `ab -n 2000 -c 50` avec N = 2 puis N = 4 | Le débit augmente avec N | Requêtes par seconde dans les deux cas |
-| **V4** Panne de la base | `vagrant halt bdd1`, puis bascule | `/sante` renvoie proprement 503, jamais d'erreur brute | Durée de la procédure de bascule |
-| **V5** Reconstruction | `vagrant destroy -f` puis `vagrant up` | Plateforme fonctionnelle sans intervention | Durée totale |
-| **V6** Panne du répartiteur (E1) | `vagrant halt lb1` | Service joignable à la même adresse `192.168.62.5` | Temps de reprise après bascule VRRP |
+Les objectifs à démontrer sont :
 
-Ordre conseillé : V1, V2, V6, V3, puis V4 et V5. **V4** laisse `bdd2` en primaire, **V5** détruit et reconstruit tout.
-
-Pendant **V3**, libérez de la mémoire si nécessaire avec `vagrant halt obs`.
-
----
-
-## 8. Sécurité et qualité
-
-| Exigence | Mise en œuvre |
+| Scénario | Vérification |
 |---|---|
-| **R2** Idempotence | Les scripts vérifient l'état avant d'agir : HAProxy n'est rechargé que si sa configuration a changé |
-| **R7** Aucun secret dans le dépôt | Mots de passe dans les `.env` (ignorés par Git) ; seuls les `.env.exemple` sont versionnés |
-| **R8** Cloisonnement réseau | Tout le trafic interne passe par `192.168.62.0/24` ; seul `lb1` expose un port vers l'hôte (8080) |
+| V1 | 20 appels `/info`, répartition équilibrée entre toutes les applications |
+| V2 | Panne d'un serveur applicatif sous charge, exclusion en moins de 5 s |
+| V3 | `ab -n 2000 -c 50`, comparaison avec `NB_APP=2` puis `NB_APP=4` |
+| V4 | Panne de `bdd1`, promotion de `bdd2`, reprise et durée mesurées |
+| V5 | `vagrant destroy -f` puis reconstruction et vérification de l'API |
+| V6 | Panne de `lb1`, reprise via la même VIP en moins de 5 s |
 
----
+Les mesures de débit dépendent des ressources de l'hôte ; rapportez les
+résultats observés sans extrapoler ni inventer de chiffres.
 
-## 9. Structure du dépôt
+## Exploitation et sécurité
 
-```
-resultats_bf/
-├── Vagrantfile            # description des machines (source unique de vérité)
-├── .env.exemple           # modèle : GROUPE, NB_APP
-├── config/
-│   ├── noeuds.yml         # engendré par le Vagrantfile, lu par les scripts
-│   └── vip.env            # adresse IP virtuelle VRRP
-├── scripts/               # provisionnement des machines + scénarios de validation
-├── app/
-│   ├── api/               # API Node.js (TypeScript) + .env.exemple
-│   └── database/          # schéma SQL et jeu de données (50 000 lignes)
-└── mesures/               # rapports générés par les scénarios V1 à V6
-```
+- Les scripts de validation V4 et V5 changent l'état des bases/VM. V4 promeut
+  `bdd2` et peut laisser `bdd1` arrêtée ; relancez V5 pour repartir d'un état
+  propre, après avoir vérifié que la destruction est autorisée.
+- Les fichiers `.env` sont ignorés par Git. Utilisez `.env.exemple` pour
+  documenter les variables nécessaires, jamais des mots de passe réels.
+- Tout le trafic entre les VM utilise le réseau privé Vagrant ; seul `lb1`
+  publie le port HTTP `8080` sur l'hôte.
+- Les scripts de provisionnement sont conçus pour être rejoués. Vérifiez
+  toutefois l'idempotence par deux exécutions consécutives de
+  `vagrant provision` et conservez les résultats.
 
----
+## Livrables de soutenance
 
-## 10. Dépannage
-
-| Problème | Solution |
-|---|---|
-| `PG_PASSWORD absent` pendant `vagrant up` | Créez `app/api/.env` (section 4.2), puis `vagrant provision bdd1` et `vagrant up` |
-| Port 8080 déjà utilisé | Une autre VM tourne encore : `vagrant global-status`, puis `vagrant halt <id>` |
-| Le poste rame, une VM ne démarre pas | Mémoire insuffisante : fermez des applications ou éteignez `obs` (`vagrant halt obs`) |
-| `bad interpreter` ou `$'\r'` dans un script | Fins de ligne Windows : le `.gitattributes` les corrige, reclonez le dépôt |
-| Avertissement « guest additions do not match » | Sans conséquence, ignorez-le |
-| `/sante` renvoie 503 | La base ne répond pas : vérifiez `vagrant status bdd1` ou appliquez la bascule (section 6.2) |
+- [Dossier d'architecture](DOSSIER_ARCHITECTURE.md) — base de rédaction
+  structurée selon les exigences du sujet ; à mettre en page sur 10 à 15 pages
+  et à compléter avec les preuves encore attendues.
+- [Journal de bord](JOURNAL_DE_BORD.md) — synthèse de la campagne technique ;
+  les noms, rôles réels, réunions et rotations doivent être renseignés par les
+  quatre membres du groupe.
+- Les [rapports V1–V6](mesures/) contiennent les mesures effectivement prises.
+  V3 avec Apache Bench, le rapport V4 après correction et V5 sans
+  provisionnement manuel restent à compléter avant de déclarer toutes les
+  validations acquises.
+Ne pas remplacer les mesures échouées ou incomplètes par des valeurs estimées.
+Ne pas remplacer les mesures échouées ou incomplètes par des valeurs estimées.

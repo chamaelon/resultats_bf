@@ -138,7 +138,7 @@ function Wait-Serveurs([int]$N, [int]$TimeoutS = 120) {
 function Get-Matricule {
   $m = Get-Env 'MATRICULE' ''
   if (-not $m) {
-    $q = "sudo -u postgres psql -p $($script:PgPort) -d $($script:PgDb) -tAc 'SELECT matricule_candidat FROM resultat ORDER BY 1 LIMIT 1'"
+    $q = "sudo -u postgres psql -p $($script:PgPort) -d $($script:PgDb) -tAc 'SELECT matricule FROM resultats ORDER BY 1 LIMIT 1'"
     $m = ((Invoke-Vm 'bdd1' $q) -split "`n" | Select-Object -First 1).Trim()
   }
   return $m
@@ -200,28 +200,35 @@ function Get-RepartitionTexte($Entrees, [string]$Champ) {
 }
 
 # ===================== Scénario =====================
-Rapport-Debut 'V5' 'Reconstruction intégrale' "powershell -ExecutionPolicy Bypass -File validation_scenario_v5.ps1 -Oui   (NB_APP=$($script:NbApp))"
+Rapport-Debut 'V5' 'Reconstruction intégrale' "powershell -ExecutionPolicy Bypass -File validation_scenario_v5.ps1 -Oui   (destruction NB_APP=10 ; reconstruction NB_APP=$($script:NbApp))"
 if (-not $Oui) { $rep = Read-Host 'Cette opération SUPPRIME toutes les VM du projet. Tapez DETRUIRE pour confirmer'; if ($rep -ne 'DETRUIRE') { Stop-Script 'Annulé.' } }
 $dossier = Join-Path $script:Racine 'mesures'; if (-not (Test-Path $dossier)) { New-Item -ItemType Directory -Path $dossier | Out-Null }
 $horo = Get-Date -Format 'yyyyMMdd_HHmmss'; $logD = Join-Path $dossier "V5_destroy_$horo.log"; $logU = Join-Path $dossier "V5_up_$horo.log"
 
 Etape 'Destruction'
-Cmd 'vagrant destroy -f'; $t0 = Get-NowMs; Invoke-Vagrant @('destroy', '-f') | Out-File $logD -Encoding utf8; $t1 = Get-NowMs
+Cmd 'NB_APP=10 vagrant destroy -f'; $t0 = Get-NowMs; Invoke-Vagrant @('destroy', '-f') '10' | Out-File $logD -Encoding utf8; $t1 = Get-NowMs
 Say "  terminée en $([int](($t1 - $t0) / 1000)) s"
 Etape 'Reconstruction (aucune commande manuelle ensuite)'
-Cmd 'vagrant up'; Invoke-Vagrant @('up') | Out-File $logU -Encoding utf8; $rc = $script:VagrantExit; $t2 = Get-NowMs
+Cmd "NB_APP=$($script:NbApp) vagrant up"; Invoke-Vagrant @('up') "$script:NbApp" | Out-File $logU -Encoding utf8; $rc = $script:VagrantExit; $t2 = Get-NowMs
 Say "  vagrant up terminé en $([int](($t2 - $t1) / 1000)) s (code $rc)"
 Bloc "Fin du journal de vagrant up ($logU)" ((Get-Content $logU -Tail 8) -join "`n")
 
 Etape 'Contrôles fonctionnels'
 $n = @(Get-Apps).Count
-if (Wait-Serveurs $n 180) { Ok "$n serveur(s) applicatif(s) répondent via le répartiteur" } else { Ko 'Les serveurs applicatifs ne répondent pas tous' }
+$appsOk = Wait-Serveurs $n 180
+if ($appsOk) { Ok "$n serveur(s) applicatif(s) répondent via le répartiteur" } else { Ko 'Les serveurs applicatifs ne répondent pas tous' }
 $r = Get-Http "$($script:LbUrl)/sante" 4; if ($r.Code -eq 200) { Ok '/sante = 200' } else { Ko "/sante = $($r.Code)" }
 $sante = ($r.Code -eq 200)
-$m = Get-Matricule; $r2 = Get-Http "$($script:LbUrl)/resultat?matricule=$m" 4
+$m = Get-Matricule
+$r2 = [pscustomobject]@{ Code = 0 }
+if ($m) {
+  $r2 = Get-Http "$($script:LbUrl)/resultat?matricule=$([uri]::EscapeDataString($m))" 4
+}
 if ($r2.Code -ge 200 -and $r2.Code -lt 300) { Ok "/resultat?matricule=$m = $($r2.Code)" } else { Ko "/resultat = $($r2.Code)" }
+$resultatOk = ($r2.Code -ge 200 -and $r2.Code -lt 300)
 $stat = (Invoke-Vm 'bdd2' "sudo -u postgres psql -p $($script:PgPort) -tAc 'SELECT status FROM pg_stat_wal_receiver'").Trim()
-if ($stat -eq 'streaming') { Ok 'bdd2 reçoit les WAL en flux' } else { Warn "réplication : '$stat'" }
+$replicationOk = ($stat -eq 'streaming')
+if ($replicationOk) { Ok 'bdd2 reçoit les WAL en flux' } else { Warn "réplication : '$stat'" }
 $t3 = Get-NowMs
 
 Etape 'Mesures'
@@ -229,5 +236,8 @@ Mesure 'Durée de la destruction' "$([int](($t1 - $t0) / 1000)) s"
 Mesure 'Durée de la reconstruction (vagrant up)' "$([int](($t2 - $t1) / 1000)) s"
 Mesure 'Durée totale (destroy + up + contrôles)' "$([int](($t3 - $t0) / 1000)) s  ($([int](($t3 - $t0) / 60000)) min)"
 Verdict ($rc -eq 0) $(if ($rc -eq 0) { 'vagrant up a réussi sans intervention' } else { "vagrant up a échoué (code $rc) : voir $logU" })
+Verdict $appsOk $(if ($appsOk) { "$n serveur(s) applicatif(s) fonctionnels" } else { 'Tous les serveurs applicatifs ne répondent pas' })
 Verdict $sante $(if ($sante) { 'Plateforme fonctionnelle après reconstruction' } else { 'Plateforme non fonctionnelle' })
+Verdict $resultatOk $(if ($resultatOk) { 'GET /resultat fonctionne avec un matricule valide' } else { 'GET /resultat ne fonctionne pas avec le matricule de contrôle' })
+Verdict $replicationOk $(if ($replicationOk) { 'bdd2 réplique bdd1 en flux' } else { "Réplication bdd2 inattendue : '$stat'" })
 Rapport-Fin

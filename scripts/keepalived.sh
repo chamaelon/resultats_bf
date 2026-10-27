@@ -29,13 +29,28 @@ FICHIER_VIP="/vagrant/config/vip.env"
 FICHIER_ENV_APP="/vagrant/app/api/.env"
 CONF=/etc/keepalived/keepalived.conf
 
-if [ -f "$FICHIER_ENV_APP" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source <(tr -d '\r' < "$FICHIER_ENV_APP")
-  set +a
-fi
-: "${VRRP_AUTH_PASS:?VRRP_AUTH_PASS absent : définissez-le dans app/api/.env (généré par le Vagrantfile, voir .env.exemple)}"
+charger_env() {
+  local fichier="$1" ligne cle valeur
+  [ -r "$fichier" ] || return 0
+  while IFS= read -r ligne || [ -n "$ligne" ]; do
+    ligne="${ligne%$'\r'}"
+    case "$ligne" in ''|'#'*) continue ;; esac
+    ligne="${ligne#export }"
+    case "$ligne" in *=*) ;; *) continue ;; esac
+    cle="${ligne%%=*}"
+    valeur="${ligne#*=}"
+    cle="${cle//[[:space:]]/}"
+    [[ "$cle" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    valeur="${valeur#"${valeur%%[![:space:]]*}"}"
+    valeur="${valeur%"${valeur##*[![:space:]]}"}"
+    case "$valeur" in \"*\") valeur="${valeur#\"}"; valeur="${valeur%\"}" ;; \'*\') valeur="${valeur#\'}"; valeur="${valeur%\'}" ;; esac
+    [ -n "${!cle+x}" ] || export "$cle=$valeur"
+  done < "$fichier"
+}
+charger_env /vagrant/.env
+charger_env "$FICHIER_ENV_APP"
+: "${PG_PASSWORD:?PG_PASSWORD absent : définissez-le dans le .env à la racine du dépôt}"
+: "${VRRP_AUTH_PASS:=$(printf '%s' "vrrp:${PG_PASSWORD}" | sha256sum | cut -c1-8)}"
 AUTH_PASS="${VRRP_AUTH_PASS:0:8}"      # keepalived limite auth_pass à 8 caractères
 
 [ -r "$FICHIER_NOEUDS" ] || { echo "❌ $FICHIER_NOEUDS introuvable" >&2; exit 1; }

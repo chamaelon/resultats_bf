@@ -16,6 +16,8 @@ end
 
 GROUPE = (ENV['GROUPE'] || 1).to_i # numéro de groupe, 1 à 8
 NB_APP = (ENV['NB_APP'] || 2).to_i # nombre de serveurs applicatifs
+abort "GROUPE doit être compris entre 1 et 8 (valeur reçue : #{GROUPE})." unless (1..8).cover?(GROUPE)
+abort "NB_APP doit être compris entre 2 et 10 (valeur reçue : #{NB_APP})." unless (2..10).cover?(NB_APP)
 RESEAU = "192.168.#{55 + GROUPE}"
 VIP = (ENV['VIP'] || "#{RESEAU}.5")          # adresse virtuelle VRRP (lb1/lb2), lue aussi par les validations
 BOITE = "bento/ubuntu-24.04"

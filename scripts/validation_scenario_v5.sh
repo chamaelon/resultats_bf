@@ -106,7 +106,7 @@ attendre_serveurs() {   # attendre_serveurs <n> [timeout_s] : attend que n serve
 }
 matricule() {   # matricule valide : $MATRICULE ou premier de la base (colonne matricule_candidat, cf. cache.sh)
   if [ -z "${MATRICULE:-}" ]; then
-    MATRICULE=$(vm bdd1 "sudo -u postgres psql -p $PG_PORT -d $PG_DB -tAc 'SELECT matricule_candidat FROM resultat ORDER BY 1 LIMIT 1'" | head -1 | tr -d ' ')
+    MATRICULE=$(vm bdd1 "sudo -u postgres psql -p $PG_PORT -d $PG_DB -tAc 'SELECT matricule FROM resultats ORDER BY 1 LIMIT 1'" | head -1 | tr -d ' ')
   fi
   printf '%s' "${MATRICULE:-}"
 }

@@ -48,16 +48,14 @@ describe("Test d'intégration pour l'application", () => {
 
 	test("GET /resultat avec un matricule valide", async () => {
 		const matricule = "123456";
-		mockDb.addData("resultat", [{ matricule_candidat: matricule, score: 85 }]);
+		const resultat = { matricule, nom: "Candidat Test", serie: "A", moyenne: 17.5, admis: true };
+		mockDb.addData("resultats", [resultat]);
 		const response = await app.inject({
 			method: "GET",
 			url: `/resultat?matricule=${matricule}`,
 		});
-		const expected: Array<{ matricule_candidat: string; score: number }> = [
-			{ matricule_candidat: matricule, score: 85 },
-		];
 		expect(response.statusCode).toBe(200);
-		expect(response.json<typeof expected>()).toEqual(expected);
+		expect(response.json<Array<typeof resultat>>()).toEqual([resultat]);
 	});
 
 	test("GET /resultat avec un matricule inconnu", async () => {

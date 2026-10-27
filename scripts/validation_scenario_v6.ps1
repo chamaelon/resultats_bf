@@ -138,7 +138,7 @@ function Wait-Serveurs([int]$N, [int]$TimeoutS = 120) {
 function Get-Matricule {
   $m = Get-Env 'MATRICULE' ''
   if (-not $m) {
-    $q = "sudo -u postgres psql -p $($script:PgPort) -d $($script:PgDb) -tAc 'SELECT matricule_candidat FROM resultat ORDER BY 1 LIMIT 1'"
+    $q = "sudo -u postgres psql -p $($script:PgPort) -d $($script:PgDb) -tAc 'SELECT matricule FROM resultats ORDER BY 1 LIMIT 1'"
     $m = ((Invoke-Vm 'bdd1' $q) -split "`n" | Select-Object -First 1).Trim()
   }
   return $m

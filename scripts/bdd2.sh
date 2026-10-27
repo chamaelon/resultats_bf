@@ -198,7 +198,7 @@ PORT_CLUSTER=$(pg_lsclusters -h | awk 'NR==1{print $3}')
 base_promue() {
   local p r
   for p in "${PORT_DB}" "${PORT_CLUSTER:-5432}" 5432; do
-    r=$(sudo -u postgres psql -p "$p" -d "${APP_DB}" -tAc "SELECT to_regclass('public.resultat') IS NOT NULL" 2>/dev/null || true)
+    r=$(sudo -u postgres psql -p "$p" -d "${APP_DB}" -tAc "SELECT to_regclass('public.resultats') IS NOT NULL" 2>/dev/null || true)
     [ "$r" = "t" ] && return 0
   done
   return 1
@@ -208,7 +208,7 @@ CLONE=0
 if [ -f "${DATADIR}/standby.signal" ] && [ "${REPLIQUE_RECLONER:-0}" != "1" ]; then
   echo "=> Ce serveur est déjà un réplica : pas de reclonage (REPLIQUE_RECLONER=1 pour forcer)."
 elif [ ! -f "${DATADIR}/standby.signal" ] && [ "${REPLIQUE_RECLONER:-0}" != "1" ] && base_promue; then
-  echo "⚠️  ${HOSTNAME} n'est plus un réplica (pas de standby.signal) mais contient la table resultat :"
+  echo "⚠️  ${HOSTNAME} n'est plus un réplica (pas de standby.signal) mais contient la table resultats :"
   echo "    il a sans doute été promu (bascule). Reclonage REFUSÉ pour ne pas détruire ses données."
   echo "    Pour le refaire réplica de l'ACTUEL primaire : REPLIQUE_RECLONER=1 vagrant provision ${HOSTNAME}"
   echo "    (le maître visé est lu dans noeuds.yml : bdd1). Aucune modification effectuée."
@@ -306,8 +306,8 @@ else
   echo "   ⚠️  WAL receiver : '${STATUT}' — voir : sudo journalctl -u ${UNITE} -n 50"
 fi
 
-NB=$(sudo -u postgres psql -p "${PORT_DB}" -d "${APP_DB}" -tAc "SELECT count(*) FROM resultat;" 2>/dev/null || echo "n/a")
-echo "   Lignes de la table 'resultat' répliquées : ${NB}"
+NB=$(sudo -u postgres psql -p "${PORT_DB}" -d "${APP_DB}" -tAc "SELECT count(*) FROM resultats;" 2>/dev/null || echo "n/a")
+echo "   Lignes de la table 'resultats' répliquées : ${NB}"
 
 echo "=> Exporter Prometheus PostgreSQL (port ${PORT_EXPORTER})..."
 if paquet_present prometheus-postgres-exporter; then
