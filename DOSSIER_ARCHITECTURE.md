@@ -7,10 +7,8 @@ Enseignant : Dr SOMDA
 Groupe : 7  
 Date de consolidation technique : 27 octobre 2026
 
-> **À compléter avant dépôt :** noms des quatre membres, date de remise, schéma
-> graphique exporté si demandé, et résultats des essais signalés comme restant
-> à refaire. Ce document distingue les mesures obtenues des validations non
-> concluantes ou non exécutées ; ne pas supprimer ces réserves.
+> **À compléter avant dépôt :** noms des quatre membres, date de remise et
+> schéma graphique exporté si demandé.
 
 ## Résumé
 
@@ -23,22 +21,35 @@ requêtes entre plusieurs instances applicatives et vérifie leur santé sur
 VRRP qui peut être reprise en cas d’arrêt de `lb1`.
 
 Le socle a été déployé sur le groupe 7, réseau privé `192.168.62.0/24`, avec
-deux applications. Les contrôles finaux après reconstruction ont confirmé
-`/sante = 200`, `/resultat?matricule=146066W = 200`, 50 000 lignes sur chacune
-des bases et une réplication active. Les tests applicatifs passent (9/9), le
-Vagrantfile est valide, et le provisionnement HAProxy de `lb1` a été rejoué
-deux fois sans changement de configuration.
+deux applications. Les contrôles fonctionnels ont confirmé les routes API,
+50 000 lignes sur chacune des bases et la réplication active. Les tests
+applicatifs passent (9/9), le Vagrantfile est valide, et deux provisions de
+`lb1` n’ont pas modifié sa configuration.
 
-Les preuves ne sont cependant pas toutes au même niveau. V1 et V6 ont réussi.
-V2 a réussi à deux travailleurs, mais échoué lors d’un essai de stress à dix
-travailleurs. V3 a été exécuté avec le générateur PowerShell de secours, pas
-avec Apache Bench comme demandé ; ces mesures sont indicatives. V4 a promu
-`bdd2`, mais son rapport initial garde une vérification erronée de `/resultat`
-(HTTP 400) ; une vérification manuelle correcte après promotion a ensuite
-renvoyé HTTP 200 et le script a été corrigé, sans nouvelle exécution complète.
-Enfin, V5 a détruit puis reconstruit l’environnement, mais l’essai a été
-interrompu avant sa fin automatique et a nécessité un provisionnement manuel
-d’app2 : la reconstruction sans intervention n’est donc pas validée.
+V1 et V6 ont réussi ; V2 a réussi à charge modérée. V3 reste indicatif faute
+d’Apache Bench, V4 doit être relancé après correction de son contrôle
+post-bascule, et V5 n’a pas démontré la reconstruction sans intervention
+manuelle. Ces réserves sont résumées dans le tableau de validation.
+
+### Synthèse pour la soutenance
+
+**Socle vérifié :** deux API, un répartiteur HAProxy, deux bases PostgreSQL
+avec 50 000 lignes chacune et réplication active. Les routes `/sante` et
+`/resultat` ont répondu HTTP 200 après remise en état. Les tests applicatifs
+passent (9/9).
+
+**Résultats démontrés :** V1 équilibre 20 appels en 10/10 ; V2 n’a observé
+aucune erreur à deux travailleurs ; V6 a transféré la VIP vers `lb2` en
+1,56 s, sous le seuil de 5 s. E1 est donc démontrée.
+
+**À présenter avec réserve :** l’essai V2 à dix travailleurs a échoué ; V3
+utilise un générateur de secours et reste indicatif ; V4 a promu `bdd2`, mais
+son contrôle automatique de `/resultat` doit être rejoué avec le correctif ;
+V5 a nécessité une intervention manuelle et ne valide pas la reconstruction
+autonome. Une seconde extension doit encore être démontrée.
+
+Les rapports bruts sous `mesures/` sont conservés comme traces. Cette synthèse
+ne les remplace pas et ne transforme pas les essais incomplets en réussites.
 
 ## 1. Contexte et objectifs
 
@@ -540,15 +551,12 @@ extensions E2/E3 ne sont pas comprises dans ces résultats.
 
 ### Conclusion
 
-Le projet dispose d’un socle reproductible décrit en code, d’une API
-fonctionnelle, de deux bases répliquées, de deux applications et d’un
-répartiteur. Les validations V1 et V6 apportent des preuves positives ; les
-tests unitaires et d’intégration sont passants. Les limites de la campagne
-restent importantes : V3 n’a pas utilisé l’outil requis, V5 n’a pas démontré
-une reconstruction autonome, V4 doit être rejoué avec son contrôle corrigé et
-la seconde extension doit être effectivement présentée. Le dépôt doit donc
-être présenté comme un travail fonctionnel avec validations restantes, et non
-comme une conformité complète à toutes les exigences.
+Le socle est fonctionnel et ses principaux composants sont documentés et
+testés. V1 et V6 apportent des preuves positives ; les tests applicatifs
+passent. Pour une conformité complète, il reste à refaire V3 avec l’outil
+demandé, produire un rapport V4 avec le contrôle corrigé, démontrer V5 sans
+intervention manuelle et valider une seconde extension. Les résultats
+présentés doivent rester conformes aux mesures conservées.
 
 ### Références dans le dépôt
 
