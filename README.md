@@ -1,286 +1,291 @@
-# Projet RÉSULTATS-BF - Infrastructure DevOps
+# RÉSULTATS-BF — Infrastructure résiliente et scalable avec Vagrant
 
-## 📌 Présentation du Projet
-Ce projet a été réalisé dans le cadre du module **DevOps et infrastructures reproductibles** (M1 Informatique) encadré par le Dr SOMDA Flavien Hervé.
-Il vise à déployer une infrastructure hautement disponible, résiliente et automatisée pour la consultation des résultats de concours de la fonction publique au Burkina Faso.
+Projet de groupe du module **DevOps et infrastructures reproductibles** — Master 1 Informatique, IBAM (Institut Burkinabè des Arts et Métiers), Université Joseph KI-ZERBO.
+Enseignant : Dr SOMDA Flavien Hervé — Année universitaire 2026-2027.
 
-L'infrastructure est entièrement pilotée par le code (Infrastructure as Code) via **Vagrant** et **VirtualBox**, et satisfait les exigences de scalabilité, de reproductibilité et de sécurité.
-
-**Groupe :** 7
-**Réseau privé du groupe :** `192.168.62.0/24`
-* **Contexte :** Projet de groupe - Master 1 Informatique / Virtualisation et Cloud Computing
-* **Établissement :** Institut Supérieur de Informatique et de Management (IBAM), Université Joseph Ki Zerbo
-* **Enseignant :** Dr SOMDA Flavien Hervé
-* **Année universitaire :** 2026-2027
+**Dépôt :** https://github.com/chamaelon/resultats_bf
+**Groupe :** 7 — **Réseau privé :** `192.168.62.0/24`
 
 ---
 
-## 🏗️ Architecture de l'Infrastructure
+## 1. Présentation
 
-Notre plateforme repose sur une architecture à trois niveaux (N-Tiers) :
-1. **Étage de Répartition de Charge (Load Balancing) & Haute Disponibilité** :
-   - `lb1` (Master) et `lb2` (Backup) propulsés par **HAProxy**.
-   - Redondance IP virtuelle (VIP) gérée par **Keepalived / VRRP** (192.168.62.10).
-2. **Étage Applicatif (Middleware Node.js)** :
-   - Multiples nœuds applicatifs (`app1`, `app2`, etc.) exécutant une API RESTful Node.js (TypeScript) sans état.
-   - Intégration d'un système de mise en cache **Redis**.
-3. **Étage de Données (Base de données PostgreSQL)** :
-   - Base de données primaire (`bdd1`).
-   - Base de données secondaire (`bdd2`) en réplication de flux (Streaming Replication) pour une résilience en cas de panne.
-4. **Étage d'Observabilité** (Bonus) :
-   - Monitoring via **Prometheus** et **Grafana**.
-La plateforme **RÉSULTATS-BF** permet aux candidats de consulter leurs résultats d'examens par numéro de matricule. L'architecture a été pensée pour répondre à deux impératifs non fonctionnels majeurs :
+La plateforme **RÉSULTATS-BF** permet à un candidat de consulter son résultat d'examen à partir de son numéro de matricule. L'infrastructure répond à deux exigences non fonctionnelles :
 
-1. **La résilience :** Le système continue de fonctionner malgré la panne d'un composant (serveur applicatif ou base de données).
-2. **La scalabilité :** L'absorption d'un pic de trafic s'effectue horizontalement par simple ajout de serveurs, sans réécriture de la configuration.
+- **Résilience** : la panne d'une machine n'interrompt pas le service.
+- **Scalabilité** : on absorbe plus de trafic en ajoutant des serveurs, sans réécrire la configuration.
 
-### Architecture Cible (Socle Obligatoire + Extensions)
-
-* **Répartition de charge (`lb1`) :** HAProxy configuré dynamiquement avec une sonde de santé (`/sante`).
-* **Répartiteur de secours (`lb2`) :** HAProxy et Keepalived/VRRP assurent le mécanisme de bascule en cas de panne de `lb1` (extension E1).
-* **Serveurs applicatifs (`app1` à `appN`) :** Services stateless (Python/Node.js) répartis sur un réseau privé.
-* **Base de données (`bdd1` & `bdd2`) :** PostgreSQL avec un nœud primaire en lecture/écriture (`bdd1`) et une réplique en flux (`bdd2`).
-* **Cache (`cache`) :** Machine dédiée au service de cache.
-* **Supervision (`obs`) :** Serveur de supervision avec Prometheus et Grafana (extension E2).
-* **Réseau privé :** Sous-réseau `192.168.5X.0/24` (où `X = 55 + numéro de groupe`).
-
-Les rôles et les adresses IP des machines sont définis dans `config/noeuds.yml`.
+Toute l'infrastructure est décrite en code (Vagrant + scripts shell) et se reconstruit sur n'importe quel poste avec une seule commande.
 
 ---
 
-## 🚀 Prérequis
+## 2. Architecture
 
-Pour lancer l'environnement, vous devez installer les outils suivants sur votre machine hôte :
-- **VirtualBox** (version >= 7.x recommandée)
-- **Vagrant** (version >= 2.4.x)
-- *Git* (pour cloner le dépôt)
-* **Outils requis sur la machine hôte :**
-  * [VirtualBox](https://www.virtualbox.org/) (version 6.1 ou supérieure)
-  * [Vagrant](https://www.vagrantup.com/) (version 2.2 ou supérieure)
-  * Git
-* **Configuration matérielle recommandée :**
-  * 8 Go de RAM minimum sur l'hôte (les extensions peuvent nécessiter davantage de mémoire).
-* **Box Vagrant utilisée :** `bento/ubuntu-24.04` (version épinglée `202404.26.0`).
-
----
-
-## ⚙️ Procédure de Déploiement (Mise en route)
-
-L'un des objectifs majeurs (Exigence R1) de ce projet est la **reconstruction intégrale**. Voici comment déployer le tout à partir de zéro :
-
-1. **Cloner le projet** et se rendre à la racine :
-   ```bash
-   git clone <URL_DU_DEPOT>
-   cd projet
-   ```
-
-2. **Créer le fichier de variables d'environnement (`.env`)** :
-   Le dépôt contient un fichier d'exemple (pour respecter la règle consistant à ne jamais comiter de mots de passe). Vous devez créer votre configuration :
-   ```bash
-   cp .env.exemple .env
-   ```
-   *(Vous pouvez ouvrir `.env` et ajuster les mots de passe si vous le souhaitez. Assurez-vous que `GROUPE=7` est bien défini).*
-
-3. **Lancer le provisionnement Vagrant** :
-   ```bash
-   vagrant up
-   ```
-   *Note : Cette commande télécharge l'image Ubuntu officielle (environ 600 Mo) et configure l'intégralité des nœuds (Load Balancers, Base de données, Application, Observabilité).*
-
----
-
-## 🌐 Accès aux Services
-
-Une fois l'infrastructure montée, voici les points d'accès exposés :
-
-- **API REST (IP Virtuelle de Haute Disponibilité)** :
-  - Info Serveur : `http://192.168.62.10/info`
-  - Santé Base de Données : `http://192.168.62.10/sante`
-  - Consultation de Résultat : `http://192.168.62.10/resultat?matricule=<MATRICULE>`
-  *(Si vous naviguez depuis votre hôte, vous pouvez aussi attaquer `http://localhost:8080/info` ou `http://localhost:8080/sante` via la redirection de port).*
-
-- **Statistiques HAProxy** :
-  - `http://192.168.62.10:8404` (monitoring du répartiteur actif).
-
----
-
-## 🧪 Scénarios de Test et Tolérance aux Pannes
-
-### 1. Tolérance d'un serveur applicatif
-L'infrastructure détecte un nœud applicatif défaillant en moins de 5 secondes grâce à la sonde HAProxy.
-- Coupez une application : `vagrant halt app1`
-- Testez les requêtes, tout continue de fonctionner sur les nœuds restants.
-
-### 2. Tolérance du répartiteur (Bascule VRRP)
-L'IP virtuelle est portée par `lb1`. S'il meurt, `lb2` prend le relais instantanément.
-- Coupez le load balancer primaire : `vagrant halt lb1`
-- L'API reste joignable à `http://192.168.62.10/info`.
-
-### 3. Tolérance de la base de données (Failover BDD)
-Si la base de données primaire (`bdd1`) tombe (ex: `vagrant halt bdd1`), l'application renverra des erreurs 503 lors des accès aux données.
-Une procédure de **basculement manuel** est nécessaire :
-1. Connectez-vous à la réplique (`bdd2`) : `vagrant ssh bdd2`
-2. Promouvez-la en maître : `sudo -u postgres psql -c 'SELECT pg_promote();'`
-3. Sur chaque nœud applicatif (`app1`, `app2`), mettez à jour la configuration pour pointer vers `bdd2` (`192.168.62.32`) :
-   ```bash
-   sudo sed -i 's/192.168.62.31/192.168.62.32/g' /etc/api-app.env
-   sudo systemctl restart api-app
-   ```
-Dès lors, les services redeviennent fonctionnels.
-
----
-
-## 🔒 Sécurité et Qualité
-
-- **Aucun secret dans le code (Exigence R7)** : Tous les mots de passe (PG_PASS, VRRP_AUTH_PASS) sont injectés dynamiquement depuis le fichier isolé `.env`.
-- **Idempotence des scripts (Exigence R2)** : Vous pouvez lancer `vagrant up --provision` autant de fois que souhaité, les configurations ne casseront pas et les services ne se relanceront que si strictement nécessaire.
-- **Réseau privé (Exigence R8)** : Une isolation stricte équipe nos VMs. Les bases de données sont inaccessibles par une machine autre qu'un serveur app ou l'autre base de données.
-
----
-*Ce fichier couvre le Livrable L1 du projet RÉSULTATS-BF.*
-1. Cloner le dépôt sur votre poste :
-
-   ```bash
-   git clone https://github.com/chamaelon/resultats_bf.git
-   cd resultats_bf
-   ```
-
-2. Vérifier le `Vagrantfile` et le fichier `config/noeuds.yml` afin de confirmer le numéro de groupe et les adresses IP utilisées.
-
-3. Démarrer l'infrastructure :
-
-   ```bash
-   vagrant up
-   ```
-
-4. Vérifier l'état des machines virtuelles :
-
-   ```bash
-   vagrant status
-   ```
-
-Le nœud `lb2` est déclaré facultatif (`required: false`). Il peut être démarré explicitement avec :
-
-```bash
-vagrant up lb2
+```
+                 Poste hôte  ──  localhost:8080 ──►  lb1:80
+                      │
+                      ▼   IP virtuelle VRRP 192.168.62.5
+          ┌────────────────────────┐
+          │  lb1 (actif)  .11      │   HAProxy + keepalived
+          │  lb2 (secours) .12     │
+          └───────────┬────────────┘
+                      │  HTTP, sonde /sante
+          ┌───────────┴────────────┐
+          │  app1 .21   app2 .22   │   API Node.js sans état
+          │  ...  appN .2N         │
+          └─────┬────────────┬─────┘
+                │            │
+        cache .51 (Redis)    │  SQL 5432
+                      ┌──────┴──────────────┐
+                      │ bdd1 .31 (primaire) │──► bdd2 .32 (réplique en flux)
+                      └─────────────────────┘
+          obs .41 : Prometheus + Grafana (collecte des métriques)
 ```
 
-**Attention :** la commande suivante détruit les machines virtuelles gérées par Vagrant et peut entraîner la perte des données qu'elles contiennent. Ne l'exécuter que si la reconstruction est autorisée.
+| Machine | Rôle | Adresse | RAM | Statut |
+|---|---|---|---|---|
+| `bdd1` | PostgreSQL primaire (lecture et écriture) | 192.168.62.31 | 768 Mo | Socle |
+| `bdd2` | Réplique en flux, promouvable | 192.168.62.32 | 768 Mo | Socle |
+| `app1` … `appN` | API Node.js sans état (N = `NB_APP`, 2 par défaut) | 192.168.62.21 … .2N | 512 Mo | Socle |
+| `lb1` | Répartiteur HAProxy actif, VRRP MASTER | 192.168.62.11 | 512 Mo | Socle |
+| `lb2` | Répartiteur de secours, VRRP BACKUP | 192.168.62.12 | 512 Mo | Extension E1 |
+| `obs` | Supervision : Prometheus et Grafana | 192.168.62.41 | 768 Mo | Extension E2 |
+| `cache` | Cache Redis des consultations | 192.168.62.51 | 512 Mo | Extension E3 |
+
+**Source unique de vérité :** le `Vagrantfile` décrit les machines et écrit `config/noeuds.yml`. La configuration de HAProxy est **engendrée** à partir de ce fichier : aucune adresse de serveur applicatif n'est écrite en dur.
+
+---
+
+## 3. Prérequis
+
+- [VirtualBox](https://www.virtualbox.org/) 7.x
+- [Vagrant](https://www.vagrantup.com/) 2.4 ou plus
+- Git
+- Un poste avec **8 Go de RAM** : les 8 machines utilisent environ 4,8 Go. Fermez les applications lourdes avant de lancer.
+- Une connexion Internet pour le premier lancement : téléchargement de la boîte `bento/ubuntu-24.04` (version épinglée `202404.26.0`) et des paquets.
+
+---
+
+## 4. Démarrage rapide
+
+### 4.1. Cloner le dépôt
+
+```bash
+git clone https://github.com/chamaelon/resultats_bf.git
+cd resultats_bf
+```
+
+### 4.2. Créer les fichiers de configuration
+
+Les mots de passe ne sont jamais versionnés (exigence R7). Le dépôt contient deux modèles, `.env.exemple`, à copier en `.env` :
+
+Linux / macOS :
+
+```bash
+cp .env.exemple .env
+cp app/api/.env.exemple app/api/.env
+```
+
+Windows (PowerShell) :
+
+```powershell
+copy .env.exemple .env
+copy app\api\.env.exemple app\api\.env
+```
+
+Ouvrez ensuite les deux fichiers `.env` et vérifiez les valeurs :
+
+| Fichier | Variable | Rôle |
+|---|---|---|
+| `.env` | `GROUPE=7` | Numéro de groupe : réseau `192.168.(55 + GROUPE).0/24` |
+| `.env` | `NB_APP=2` | Nombre de serveurs applicatifs |
+| `app/api/.env` | `PORT` | Port d'écoute de l'API (80) |
+| `app/api/.env` | `PG_USER`, `PG_PASSWORD`, `PG_PORT`, `PG_DB` | Accès PostgreSQL — **`PG_PASSWORD` est obligatoire** |
+| `app/api/.env` | `REDIS_PORT`, `REDIS_PASSWORD`, `CACHE_TTL`, `CACHE_PREFIX` | Cache Redis |
+| `app/api/.env` | `VRRP_AUTH_PASS` | Mot de passe VRRP de keepalived (**8 caractères maximum**) |
+
+> Les deux fichiers `.env` sont ignorés par Git. Ne commitez jamais de vrai mot de passe.
+
+### 4.3. Lancer l'infrastructure
+
+```bash
+vagrant up
+```
+
+Le premier lancement prend de 30 à 60 minutes. Les machines sont créées dans cet ordre : `bdd1`, `bdd2`, `cache`, `app1`, `app2`, `lb1`, `lb2`, `obs`. Les bases sont prêtes avant les serveurs applicatifs.
+
+Vérifiez l'état des machines :
+
+```bash
+vagrant status
+```
+
+Toutes doivent être `running`.
+
+### 4.4. Vérifier que le service répond
+
+Sous Windows, utilisez `curl.exe` et non `curl`.
+
+```bash
+curl http://localhost:8080/info        # nom du serveur qui répond : app1 ou app2, en alternance
+curl http://localhost:8080/sante       # 200 si la base répond, 503 sinon
+curl http://192.168.62.5/info          # même service, via l'IP virtuelle VRRP
+```
+
+---
+
+## 5. Accès aux services
+
+| Service | Adresse |
+|---|---|
+| API depuis l'hôte (redirection de port vers `lb1`) | `http://localhost:8080` |
+| API via l'IP virtuelle haute disponibilité | `http://192.168.62.5` |
+| Statistiques HAProxy de `lb1` / `lb2` | `http://192.168.62.11:8404/stats` / `http://192.168.62.12:8404/stats` |
+| Prometheus | `http://192.168.62.41:9090` |
+| Grafana | `http://192.168.62.41:3000` |
+
+Points d'entrée de l'API :
+
+| Point d'entrée | Comportement |
+|---|---|
+| `GET /resultat?matricule=…` | Résultat du candidat au format JSON, lu dans la base (via le cache Redis) |
+| `GET /sante` | 200 si la base répond, 503 sinon. C'est la sonde interrogée par HAProxy |
+| `GET /info` | Nom d'hôte du serveur qui a répondu, pour observer la répartition |
+
+---
+
+## 6. Commandes d'exploitation
+
+### 6.1. Ajouter des serveurs applicatifs (exigence R3)
+
+Une seule valeur à changer : `NB_APP`.
+
+Linux / macOS :
+
+```bash
+NB_APP=4 vagrant up
+NB_APP=4 vagrant provision lb1 lb2
+```
+
+Windows (PowerShell) :
+
+```powershell
+$env:NB_APP="4"; vagrant up
+vagrant provision lb1 lb2
+```
+
+`vagrant up` crée `app3` et `app4`. `vagrant provision lb1 lb2` régénère la configuration HAProxy depuis `config/noeuds.yml` : les nouveaux serveurs reçoivent du trafic dès que leur sonde `/sante` répond. Pour rendre le changement permanent, modifiez `NB_APP` dans `.env`.
+
+### 6.2. Bascule de la base de données (exigence R6)
+
+Si `bdd1` tombe, `/sante` renvoie 503 et HAProxy retire les serveurs applicatifs. La bascule vers `bdd2` est **manuelle**, pour éviter deux primaires simultanés (« split-brain ») en cas de simple coupure réseau.
+
+1. Promouvoir la réplique :
+
+   ```bash
+   vagrant ssh bdd2 -c "sudo -u postgres psql -c 'SELECT pg_promote();'"
+   ```
+
+2. Sur chaque serveur applicatif (`app1`, `app2`, …), pointer vers `bdd2` et redémarrer l'API :
+
+   ```bash
+   vagrant ssh app1
+   sudo sed -i 's/192.168.62.31/192.168.62.32/g' /etc/api-app.env
+   echo 192.168.62.32 | sudo tee /etc/api-app.primaire
+   sudo systemctl restart api-app
+   ```
+
+   La ligne `tee` mémorise le nouveau primaire : un futur `vagrant provision` ne repointera pas l'API vers `bdd1`.
+
+3. Vérifier : `curl http://localhost:8080/sante` doit renvoyer 200.
+
+Le script `scripts/validation_scenario_v4` exécute et chronomètre cette procédure. Pour revenir à l'état initial (`bdd1` primaire), reconstruisez la plateforme (section 6.3).
+
+### 6.3. Reconstruction complète (exigence R1)
+
+> ⚠️ Cette commande **supprime toutes les machines** et leurs données.
 
 ```bash
 vagrant destroy -f
 vagrant up
 ```
 
----
+### 6.4. Autres commandes utiles
 
-## 4. Extension E1 — Haute disponibilité du répartiteur
-
-L'extension E1 ajoute `lb2` comme répartiteur de secours. HAProxy assure la répartition de charge et Keepalived/VRRP gère le mécanisme de bascule selon la configuration déployée.
-
-Les tests de `lb1` et `lb2` ont été effectués et le fonctionnement de la bascule a été vérifié.
-
-La validation porte notamment sur :
-
-* le fonctionnement du répartiteur principal `lb1` ;
-* le fonctionnement du répartiteur de secours `lb2` ;
-* l'accessibilité du service lors de l'arrêt du répartiteur principal ;
-* la reprise du service par le répartiteur de secours.
+| Commande | Effet |
+|---|---|
+| `vagrant halt app1` | Éteint une machine (simulation de panne) |
+| `vagrant up app1` | La redémarre |
+| `vagrant provision` | Rejoue les scripts ; idempotent (exigence R2), rien ne change au second passage |
+| `vagrant ssh lb1` | Se connecte à une machine |
+| `vagrant status` | État de toutes les machines |
 
 ---
 
-## 5. Extension E2 — Supervision et observabilité
+## 7. Scénarios de validation (V1 à V6)
 
-L'extension E2 ajoute le serveur `obs` afin de superviser les machines et les services de l'infrastructure.
+Chaque scénario a un script prêt dans `scripts/`, en version PowerShell (`.ps1`) et Bash (`.sh`). Lancez-les depuis la racine du dépôt :
 
-Les composants utilisés sont :
-
-* **Prometheus :** collecte et stockage des métriques.
-* **Node Exporter :** exposition des métriques système des machines.
-* **Grafana :** visualisation des métriques à l'aide de tableaux de bord.
-
-La configuration de Prometheus prévoit une collecte toutes les cinq secondes. Les cibles sont définies à partir de la configuration des nœuds et des exporteurs concernés.
-
-### Accès aux services
-
-Remplacer `IP_OBS` par l'adresse IP de la machine `obs`, définie dans `config/noeuds.yml`.
-
-* **Prometheus :** `http://IP_OBS:9090`
-* **Grafana :** `http://IP_OBS:3000`
-
-La disponibilité des métriques dépend du démarrage des machines, de la configuration des cibles et du fonctionnement des exporteurs.
-
----
-
-## 6. Scénarios de validation V1 à V6
-
-Les scénarios suivants permettent de vérifier le comportement de l'infrastructure. Les résultats observés doivent être consignés dans un compte rendu de tests.
-
-| Test | Procédure | Vérification attendue |
-|---|---|---|
-| **V1 — Répartition de charge** | Envoyer plusieurs requêtes à l'endpoint `/info` via `lb1`. | Vérifier que les requêtes sont distribuées entre les serveurs applicatifs disponibles. |
-| **V2 — Panne applicative** | Arrêter un serveur applicatif pendant l'envoi de requêtes. | Vérifier que le service reste accessible grâce aux serveurs applicatifs disponibles et relever les erreurs éventuelles. |
-| **V3 — Montée en charge** | Effectuer un test de charge avec ApacheBench. | Relever le débit, le temps de réponse et le nombre de requêtes échouées. |
-| **V4 — Panne de la base primaire** | Arrêter `bdd1` et observer le comportement de l'application et la procédure de reprise prévue. | Vérifier la disponibilité des données et relever les éventuelles interruptions. |
-| **V5 — Reconstruction** | Reconstruire l'infrastructure lorsque cette opération est autorisée. | Vérifier que les machines et les services peuvent être recréés et démarrés correctement. |
-| **V6 — Panne du répartiteur** | Arrêter `lb1` pendant l'envoi de requêtes. | Vérifier la reprise du service par `lb2` et relever le temps de bascule. |
-
-### Exemple de commande pour V3
-
-Remplacer `IP_LB1` par l'adresse IP de `lb1` définie dans `config/noeuds.yml`.
-
-```bash
-ab -n 2000 -c 50 http://IP_LB1/info
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\validation_scenario_v1.ps1
 ```
 
-Les résultats peuvent être comparés en faisant varier le nombre de serveurs applicatifs, tout en tenant compte des ressources disponibles.
+```bash
+bash scripts/validation_scenario_v1.sh
+```
 
-### Compte rendu des tests
+Chaque script produit un rapport dans `mesures/` : commande exacte, résultat brut, mesures, verdict. La section « Commentaire » est à compléter par l'équipe.
 
-Pour chaque scénario, consigner :
+| Scénario | Ce qui est testé | Attendu | Mesure relevée |
+|---|---|---|---|
+| **V1** Répartition | 20 appels à `/info` | Les N serveurs apparaissent tour à tour | Écart entre le plus et le moins sollicité (< 20 %) |
+| **V2** Panne d'une app | `vagrant halt app1` pendant une charge | Plus aucune erreur au-delà de 5 s | Requêtes perdues, durée de la période dégradée |
+| **V3** Montée en charge | `ab -n 2000 -c 50` avec N = 2 puis N = 4 | Le débit augmente avec N | Requêtes par seconde dans les deux cas |
+| **V4** Panne de la base | `vagrant halt bdd1`, puis bascule | `/sante` renvoie proprement 503, jamais d'erreur brute | Durée de la procédure de bascule |
+| **V5** Reconstruction | `vagrant destroy -f` puis `vagrant up` | Plateforme fonctionnelle sans intervention | Durée totale |
+| **V6** Panne du répartiteur (E1) | `vagrant halt lb1` | Service joignable à la même adresse `192.168.62.5` | Temps de reprise après bascule VRRP |
 
-* la date et les conditions d'exécution ;
-* les commandes exécutées ;
-* le résultat obtenu ;
-* les erreurs ou les requêtes perdues ;
-* le temps de reprise, lorsqu'il est mesuré ;
-* la conclusion : réussi, échoué ou à reprendre.
+Ordre conseillé : V1, V2, V6, V3, puis V4 et V5. **V4** laisse `bdd2` en primaire, **V5** détruit et reconstruit tout.
+
+Pendant **V3**, libérez de la mémoire si nécessaire avec `vagrant halt obs`.
 
 ---
 
-## 7. Vérifications et dépannage
+## 8. Sécurité et qualité
 
-### État des machines virtuelles
-
-```bash
-vagrant status
-```
-
-### Vérification des services de supervision
-
-Sur la machine `obs`, vérifier l'état des services concernés lorsqu'ils sont installés :
-
-```bash
-systemctl status prometheus
-systemctl status grafana-server
-systemctl status prometheus-node-exporter
-```
-
-### En cas de problème
-
-* Vérifier l'état des machines virtuelles.
-* Contrôler les adresses IP définies dans `config/noeuds.yml`.
-* Vérifier l'accessibilité des ports utilisés.
-* Contrôler les cibles configurées dans Prometheus.
-* Consulter les journaux du service concerné.
-* Vérifier que les exporteurs sont démarrés et accessibles.
+| Exigence | Mise en œuvre |
+|---|---|
+| **R2** Idempotence | Les scripts vérifient l'état avant d'agir : HAProxy n'est rechargé que si sa configuration a changé |
+| **R7** Aucun secret dans le dépôt | Mots de passe dans les `.env` (ignorés par Git) ; seuls les `.env.exemple` sont versionnés |
+| **R8** Cloisonnement réseau | Tout le trafic interne passe par `192.168.62.0/24` ; seul `lb1` expose un port vers l'hôte (8080) |
 
 ---
 
-## 8. Sécurité et bonnes pratiques
+## 9. Structure du dépôt
 
-* Ne jamais versionner de mots de passe, de secrets ou de fichiers `.env` personnels.
-* Conserver les fichiers d'exemple nécessaires au déploiement.
-* Examiner les modifications avant de les intégrer dans la branche `main`.
-* N'effectuer les opérations destructives que lorsque cela est autorisé.
-* Documenter les résultats réellement observés et ne pas inventer de mesures.
+```
+resultats_bf/
+├── Vagrantfile            # description des machines (source unique de vérité)
+├── .env.exemple           # modèle : GROUPE, NB_APP
+├── config/
+│   ├── noeuds.yml         # engendré par le Vagrantfile, lu par les scripts
+│   └── vip.env            # adresse IP virtuelle VRRP
+├── scripts/               # provisionnement des machines + scénarios de validation
+├── app/
+│   ├── api/               # API Node.js (TypeScript) + .env.exemple
+│   └── database/          # schéma SQL et jeu de données (50 000 lignes)
+└── mesures/               # rapports générés par les scénarios V1 à V6
+```
+
+---
+
+## 10. Dépannage
+
+| Problème | Solution |
+|---|---|
+| `PG_PASSWORD absent` pendant `vagrant up` | Créez `app/api/.env` (section 4.2), puis `vagrant provision bdd1` et `vagrant up` |
+| Port 8080 déjà utilisé | Une autre VM tourne encore : `vagrant global-status`, puis `vagrant halt <id>` |
+| Le poste rame, une VM ne démarre pas | Mémoire insuffisante : fermez des applications ou éteignez `obs` (`vagrant halt obs`) |
+| `bad interpreter` ou `$'\r'` dans un script | Fins de ligne Windows : le `.gitattributes` les corrige, reclonez le dépôt |
+| Avertissement « guest additions do not match » | Sans conséquence, ignorez-le |
+| `/sante` renvoie 503 | La base ne répond pas : vérifiez `vagrant status bdd1` ou appliquez la bascule (section 6.2) |
