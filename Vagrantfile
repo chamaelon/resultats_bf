@@ -42,7 +42,7 @@ end
 NOEUDS << { nom: "lb1", ip: "#{RESEAU}.11", mem: 512, role: "lb", required:true }
 
 # Répartiteur de charge secondaire (optionnel)
-NOEUDS << { nom: "lb2", ip: "#{RESEAU}.12", mem: 512, role: "lb2",required:false }
+NOEUDS << { nom: "lb2", ip: "#{RESEAU}.12", mem: 512, role: "lb2",required:true }
 
 # Observation et monitoring (onon ptionnel)
 NOEUDS << { nom: "obs", ip: "#{RESEAU}.41", mem: 768, role: "obs",required:true }

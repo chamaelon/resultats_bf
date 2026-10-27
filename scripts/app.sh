@@ -1,12 +1,22 @@
 #!/bin/bash
 # =============================================================================
 #  app.sh — Provisionnement d'un serveur applicatif (VM app1..appN)
-#  API REST compilée en un seul fichier JS (dist/index.js), exécutée par Node.js
-#  sous systemd (service « api-app »), reliée à PostgreSQL et, si la VM « cache »
-#  existe, à Redis.
+#  Installe les dépendances, COMPILE l'API (Bun) en un seul fichier JS (dist/index.js) et
+#  l'exécute sous systemd (service « api-app », Node.js), reliée à PostgreSQL et, si la VM
+#  « cache » existe, à Redis.
 #
-#  IDEMPOTENT : rejoué, il ne modifie rien et ne redémarre le service QUE si le code,
-#  le .env ou la configuration systemd ont réellement changé.
+#  IDEMPOTENT : rejoué, il ne modifie rien. Dépendances et compilation ne sont relancées QUE si
+#  les sources (src/, package.json, bun.lock, tsconfig...) ont changé ; le service n'est
+#  redémarré QUE si le bundle, le .env ou la configuration systemd ont réellement changé.
+#
+#  - Compilation DANS la VM (Linux), à partir de /vagrant/app/api copié dans /opt/app-src :
+#    le node_modules de l'hôte (Windows) n'est jamais utilisé.
+#  - Commande de build : le script « build » de package.json s'il existe (il doit produire
+#    dist/index.js), sinon « bun build <point d'entrée> --target node --outfile dist/index.js »
+#    (point d'entrée : src/index.ts, src/main.ts, src/server.ts ou index.ts).
+#  - Variables facultatives (.env) : BUILD_CMD (commande de build à la place), BUN_VERSION,
+#    APP_RUNTIME=node|bun (exécution du bundle ; node par défaut).
+#  - Repli : sans package.json mais avec un dist/index.js déjà compilé, ce bundle est déployé tel quel.
 #
 #  - Secrets (PG_PASSWORD, REDIS_PASSWORD) : lus dans le .env (jamais dans ce script).
 #  - Base visée : bdd1 (noeuds.yml), ou l'IP mémorisée par une bascule dans
@@ -104,6 +114,9 @@ echo "==================================================="
 DOSSIER_SOURCE="/vagrant/app/api"
 DOSSIER_EXECUTION="/opt/app"
 FICHIER_ENTREE="dist/index.js"          # bundle JS unique produit par la compilation
+DOSSIER_BUILD="/opt/app-src"            # copie de travail Linux où l'on installe les dépendances et compile
+FICHIER_HASH_BUILD="$DOSSIER_BUILD/.build-hash"
+APP_RUNTIME="${APP_RUNTIME:-node}"      # node (défaut) ou bun
 PORT_APP=$(echo "${PORT:-80}" | tr -d '\r')
 SERVICE_NAME="api-app"
 FICHIER_ENV_SERVICE="/etc/${SERVICE_NAME}.env"       # variables calculées (prioritaires sur .env)
@@ -178,6 +191,27 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 echo "Node.js $(node -v)"
 
+# Bun : sert à installer les dépendances et à compiler (version lue dans mise.toml si elle y est fixée)
+installer_bun() {
+  local voulu="" actuel=""
+  if [ -f "$DOSSIER_SOURCE/mise.toml" ]; then
+    voulu=$(tr -d '\r' < "$DOSSIER_SOURCE/mise.toml" | sed -n -E 's/^[[:space:]]*bun[[:space:]]*=[[:space:]]*"?([0-9]+\.[0-9]+\.[0-9]+)"?.*/\1/p' | head -n1)
+  fi
+  voulu="${BUN_VERSION:-$voulu}"
+  command -v bun >/dev/null 2>&1 && actuel=$(bun --version 2>/dev/null || true)
+  if [ -n "$actuel" ] && { [ -z "$voulu" ] || [ "$actuel" = "$voulu" ]; }; then
+    echo "Bun $actuel déjà installé"; return 0
+  fi
+  apt_installer unzip curl ca-certificates
+  echo "=> Installation de Bun ${voulu:-(dernière version)}..."
+  if ! curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash -s ${voulu:+"bun-v$voulu"}; then
+    echo "   installateur bun.sh indisponible : repli sur npm"
+    npm install -g "bun${voulu:+@$voulu}"
+  fi
+  command -v bun >/dev/null 2>&1 || { echo "❌ Bun introuvable après installation" >&2; exit 1; }
+  echo "Bun $(bun --version)"
+}
+
 # ==========================================
 # 2. Configuration du Pare-feu
 # ==========================================
@@ -187,25 +221,66 @@ ufw allow "${PORT_APP}/tcp"
 ufw --force enable
 
 # ==========================================
-# 3. Synchronisation (Inclut les fichiers cachés comme .env)
+# 3. Dépendances + compilation (si les sources ont changé) puis déploiement du bundle
 # ==========================================
-if [ ! -f "$DOSSIER_SOURCE/$FICHIER_ENTREE" ]; then
-  echo "❌ $DOSSIER_SOURCE/$FICHIER_ENTREE introuvable : l'API n'est pas compilée." >&2
-  echo "   Compilez-la sur l'hôte (cd app/api && bun run build) ou versionnez dist/index.js." >&2
+SRC_BUNDLE="$DOSSIER_SOURCE/$(dirname "$FICHIER_ENTREE")"      # repli : bundle déjà compilé sur l'hôte
+
+if [ -f "$DOSSIER_SOURCE/package.json" ]; then
+  echo "=> Copie des sources vers $DOSSIER_BUILD (sans node_modules, dist, .git, .env)..."
+  mkdir -p "$DOSSIER_BUILD"
+  rsync -a --delete --exclude node_modules --exclude dist --exclude .git \
+    --exclude '/.env' --exclude '/.build-hash' "$DOSSIER_SOURCE/" "$DOSSIER_BUILD/"
+
+  # Empreinte des sources : tout sauf node_modules, dist et le fichier d'empreinte lui-même
+  HASH_SOURCES=$( (cd "$DOSSIER_BUILD" && find . \( -path ./node_modules -o -path ./dist -o -path ./.build-hash \) -prune -o -type f -print0 \
+                    | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | cut -d' ' -f1) )
+
+  if [ -f "$DOSSIER_BUILD/$FICHIER_ENTREE" ] && [ "$(cat "$FICHIER_HASH_BUILD" 2>/dev/null || true)" = "$HASH_SOURCES" ]; then
+    echo "=> Sources inchangées : installation des dépendances et compilation ignorées"
+  else
+    installer_bun
+    echo "=> Installation des dépendances (bun install)..."
+    ( cd "$DOSSIER_BUILD" && { bun install --frozen-lockfile || bun install; } ) \
+      || { echo "❌ bun install a échoué" >&2; exit 1; }
+
+    rm -rf "$DOSSIER_BUILD/dist"
+    SCRIPT_BUILD=$(cd "$DOSSIER_BUILD" && node -p "String(((require('./package.json').scripts) || {}).build || '')" 2>/dev/null || true)
+    if [ -n "${BUILD_CMD:-}" ]; then
+      echo "=> Compilation : $BUILD_CMD"
+      ( cd "$DOSSIER_BUILD" && bash -c "$BUILD_CMD" ) || { echo "❌ La compilation (BUILD_CMD) a échoué" >&2; exit 1; }
+    elif [ -n "$SCRIPT_BUILD" ]; then
+      echo "=> Compilation : bun run build  ($SCRIPT_BUILD)"
+      ( cd "$DOSSIER_BUILD" && bun run build ) || { echo "❌ bun run build a échoué" >&2; exit 1; }
+    else
+      POINT_ENTREE=""
+      for f in src/index.ts src/main.ts src/server.ts index.ts; do
+        if [ -f "$DOSSIER_BUILD/$f" ]; then POINT_ENTREE="$f"; break; fi
+      done
+      [ -n "$POINT_ENTREE" ] || { echo "❌ Pas de script « build » dans package.json et aucun point d'entrée (src/index.ts...) : définissez BUILD_CMD dans le .env" >&2; exit 1; }
+      echo "=> Compilation : bun build $POINT_ENTREE --target node --outfile $FICHIER_ENTREE"
+      ( cd "$DOSSIER_BUILD" && bun build "$POINT_ENTREE" --target node --outfile "$FICHIER_ENTREE" ) \
+        || { echo "❌ bun build a échoué" >&2; exit 1; }
+    fi
+    [ -f "$DOSSIER_BUILD/$FICHIER_ENTREE" ] || { echo "❌ La compilation n'a pas produit $FICHIER_ENTREE (dans $DOSSIER_BUILD)" >&2; exit 1; }
+    echo "$HASH_SOURCES" > "$FICHIER_HASH_BUILD"
+    echo "   ✅ Compilation terminée ($(wc -c < "$DOSSIER_BUILD/$FICHIER_ENTREE") octets)"
+  fi
+  SRC_BUNDLE="$DOSSIER_BUILD/$(dirname "$FICHIER_ENTREE")"
+elif [ ! -f "$DOSSIER_SOURCE/$FICHIER_ENTREE" ]; then
+  echo "❌ Ni $DOSSIER_SOURCE/package.json (sources à compiler) ni $DOSSIER_SOURCE/$FICHIER_ENTREE (bundle déjà compilé) : rien à déployer." >&2
   exit 1
 fi
 
-echo "=> Copie des fichiers (code source + .env)..."
-sudo mkdir -p "$DOSSIER_EXECUTION"
+echo "=> Déploiement du bundle vers $DOSSIER_EXECUTION..."
+mkdir -p "$DOSSIER_EXECUTION"
 FP_AVANT=$(empreinte)
-sudo rsync -a --delete --exclude node_modules --exclude .git --exclude '/.env' --exclude 'dist/package.json' \
-  "$DOSSIER_SOURCE/" "$DOSSIER_EXECUTION/"
+rsync -a --delete --exclude package.json "$SRC_BUNDLE/" "$DOSSIER_EXECUTION/$(dirname "$FICHIER_ENTREE")/"
 
 # .env venant de Windows : on installe une copie sans CRLF, seulement si son contenu change
 if [ -f "$DOSSIER_SOURCE/.env" ]; then
   tr -d '\r' < "$DOSSIER_SOURCE/.env" | maj_fichier "$DOSSIER_EXECUTION/.env" 0600 || true
 else
-  sudo rm -f "$DOSSIER_EXECUTION/.env"
+  rm -f "$DOSSIER_EXECUTION/.env"
 fi
 
 if [ ! -f "$DOSSIER_EXECUTION/$FICHIER_ENTREE" ]; then
@@ -250,6 +325,11 @@ then A_REDEMARRER=1; fi
 # 5. Service Systemd avec chargement du .env
 # ==========================================
 echo "=> Création du service Systemd..."
+case "$APP_RUNTIME" in
+  node) EXEC_RUNTIME=$(command -v node) ;;
+  bun)  installer_bun; EXEC_RUNTIME=$(command -v bun) ;;
+  *)    echo "❌ APP_RUNTIME doit valoir node ou bun (reçu : $APP_RUNTIME)" >&2; exit 1 ;;
+esac
 UNITE_MODIFIEE=0
 if maj_fichier /etc/systemd/system/${SERVICE_NAME}.service 0644 <<EOF
 [Unit]
@@ -267,7 +347,7 @@ EnvironmentFile=-$DOSSIER_EXECUTION/.env
 EnvironmentFile=$FICHIER_ENV_SERVICE
 
 # Lancement du bundle compilé
-ExecStart=/usr/bin/node $FICHIER_ENTREE
+ExecStart=$EXEC_RUNTIME $FICHIER_ENTREE
 
 # Redémarrage automatique
 Restart=always
