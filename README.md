@@ -4,7 +4,7 @@ Projet de groupe du module **DevOps et infrastructures reproductibles** — Mast
 Enseignant : Dr SOMDA Flavien Hervé — Année universitaire 2026-2027.
 
 **Dépôt :** https://github.com/chamaelon/resultats_bf
-**Groupe :** 7 — **Réseau privé :** `192.168.62.0/24`
+**Équipe :** 17 — **Numéro réseau attribué (G) :** 7 — **Réseau privé :** `192.168.62.0/24`
 
 ---
 
@@ -97,7 +97,7 @@ Ouvrez ensuite les deux fichiers `.env` et vérifiez les valeurs :
 
 | Fichier | Variable | Rôle |
 |---|---|---|
-| `.env` | `GROUPE=7` | Numéro de groupe : réseau `192.168.(55 + GROUPE).0/24` |
+| `.env` | `GROUPE=7` | Numéro **réseau** G attribué (7), et non le numéro d'équipe (17) : réseau `192.168.(55 + G).0/24`. VirtualBox n'accepte que G de 1 à 8 |
 | `.env` | `NB_APP=2` | Nombre de serveurs applicatifs |
 | `app/api/.env` | `PORT` | Port d'écoute de l'API (80) |
 | `app/api/.env` | `PG_USER`, `PG_PASSWORD`, `PG_PORT`, `PG_DB` | Accès PostgreSQL — **`PG_PASSWORD` est obligatoire** |
