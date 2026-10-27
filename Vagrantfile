@@ -17,6 +17,7 @@ end
 GROUPE = (ENV['GROUPE'] || 1).to_i # numéro de groupe, 1 à 8
 NB_APP = (ENV['NB_APP'] || 2).to_i # nombre de serveurs applicatifs
 RESEAU = "192.168.#{55 + GROUPE}"
+VIP = (ENV['VIP'] || "#{RESEAU}.5")          # adresse virtuelle VRRP (lb1/lb2), lue aussi par les validations
 BOITE = "bento/ubuntu-24.04"
 VERSION = "202404.26.0"
 
@@ -50,6 +51,7 @@ NOEUDS << { nom: "obs", ip: "#{RESEAU}.41", mem: 768, role: "obs",required:true 
 # Les scripts liront ce fichier dans /vagrant/config/noeuds.yml
 FileUtils.mkdir_p("config")
 File.write("config/noeuds.yml", NOEUDS.to_yaml)
+File.write("config/vip.env", "VIP=#{VIP}\n")
 
 Vagrant.configure("2") do |config|
   config.vm.box = BOITE
@@ -73,16 +75,14 @@ Vagrant.configure("2") do |config|
         if command -v ufw >/dev/null; then ufw allow from #{RESEAU}.41 to any port 9100 proto tcp; fi
       SH
 
-      # Le répartiteur est reprovisionné à chaque "vagrant up" : sa configuration
-      # suit donc automatiquement NB_APP (R3). lb.sh (et lb2.sh) sont idempotents (R2).
-      node.vm.provision "shell", path: "./scripts/#{n[:role]}.sh",
+      # Un script par machine : app.sh (app1..N), bdd1.sh, bdd2.sh, cache.sh, lb1.sh, lb2.sh, obs.sh.
+      # Les répartiteurs (HAProxy + Keepalived) sont reprovisionnés à chaque "vagrant up" : leur
+      # configuration suit donc NB_APP (R3). Tous les scripts sont idempotents (R2).
+      script = n[:role] == "app" ? "app" : n[:nom]
+      node.vm.provision "shell", path: "./scripts/#{script}.sh",
                         run: (n[:role].start_with?("lb") ? "always" : "once")
 
-      # Configuration VRRP Keepalived (Extension E1)
-      if n[:nom] == "lb1" || n[:nom] == "lb2"
-        node.vm.provision "shell", path: "./scripts/keepalived.sh", run: "always"
-      end
-      
+
                         # Configuration de la mémoire et du nombre de CPU pour la machine virtuelle
       node.vm.provider "virtualbox" do |vb|
         vb.memory = n[:mem]

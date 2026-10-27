@@ -1,41 +1,41 @@
 ---
 - :nom: bdd1
-  :ip: 192.168.62.31
+  :ip: 192.168.56.31
   :mem: 768
   :role: bdd
   :required: true
 - :nom: bdd2
-  :ip: 192.168.62.32
+  :ip: 192.168.56.32
   :mem: 768
   :role: replique
   :required: true
 - :nom: cache
-  :ip: 192.168.62.51
+  :ip: 192.168.56.51
   :mem: 512
   :role: cache
   :required: true
 - :nom: app1
-  :ip: 192.168.62.21
+  :ip: 192.168.56.21
   :mem: 512
   :role: app
   :required: true
 - :nom: app2
-  :ip: 192.168.62.22
+  :ip: 192.168.56.22
   :mem: 512
   :role: app
   :required: true
 - :nom: lb1
-  :ip: 192.168.62.11
+  :ip: 192.168.56.11
   :mem: 512
   :role: lb
   :required: true
 - :nom: lb2
-  :ip: 192.168.62.12
+  :ip: 192.168.56.12
   :mem: 512
   :role: lb2
   :required: false
 - :nom: obs
-  :ip: 192.168.62.41
+  :ip: 192.168.56.41
   :mem: 768
   :role: obs
   :required: true

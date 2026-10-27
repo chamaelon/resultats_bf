@@ -5,6 +5,7 @@
 
 # Dossiers Git (sous-modules ou dépôts imbriqués)
 .git/
+.vagrant/
 
 # Fichiers système et OS
 .DS_Store
@@ -17,3 +18,5 @@ __pycache__/
 *.pyc
 dist/
 build/
+*.zip
+sauvegarde/
