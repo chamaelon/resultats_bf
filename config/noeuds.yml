@@ -13,7 +13,7 @@
   :ip: 192.168.56.51
   :mem: 512
   :role: cache
-  :required: true
+  :required: false
 - :nom: app1
   :ip: 192.168.56.21
   :mem: 512
@@ -38,4 +38,4 @@
   :ip: 192.168.56.41
   :mem: 768
   :role: obs
-  :required: true
+  :required: false

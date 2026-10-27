@@ -63,7 +63,7 @@ export class MockDatabase {
 
 		const rows = this.getData(table);
 		const filtered = params.length
-			? rows.filter((row) => row.matricule_candidat === params[0])
+			? rows.filter((row) => (row.matricule ?? row.matricule_candidat) === params[0])
 			: rows;
 
 		return Promise.resolve({ rows: filtered, rowCount: filtered.length });

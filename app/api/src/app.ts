@@ -42,9 +42,8 @@ export function buildFastify(config?: AppConfig): FastifyInstance {
 		}
 
 		try {
-			// Bug corrigé : on sélectionnait "1" au lieu des colonnes du résultat,
-			// donc l'API ne renvoyait jamais les vraies données (score, décision...).
-			const result = await fastify.pg.query("SELECT * FROM resultat WHERE matricule_candidat = $1", [matricule]);
+			// Renvoie les champs définis par le schéma métier resultats.
+			const result = await fastify.pg.query("SELECT * FROM resultats WHERE matricule = $1", [matricule]);
 
 			if (result.rowCount === 0) {
 				return reply.status(404).send({ message: "Aucun résultat trouvé pour le matricule fourni" });

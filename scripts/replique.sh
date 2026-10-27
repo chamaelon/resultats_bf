@@ -6,12 +6,14 @@ echo " Déploiement de PostgreSQL (Réplica / Esclave)     "
 echo "==================================================="
 
 # --- Variables (.env synchronisé via /vagrant, jamais versionné — R7) ---
-if [ -f /vagrant/app/api/.env ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source <(tr -d '\r' < /vagrant/app/api/.env)
-  set +a
-fi
+for FICHIER_ENV in /vagrant/.env /vagrant/app/api/.env; do
+  if [ -f "$FICHIER_ENV" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source <(tr -d '\r' < "$FICHIER_ENV")
+    set +a
+  fi
+done
 
 # ==========================================
 # 0. CONFIGURATION ET VARIABLES
@@ -22,7 +24,10 @@ PORT_DB=$(echo "${PG_PORT:-5432}" | tr -d '\r')
 APP_DB="${PG_DB:-postgres}"
 APP_USER="${PG_USER:-postgres}"
 PG_REPLICATION_USER="${PG_REPLICATION_USER:-replicateur}"
-PG_REPLICATION_PASSWORD="${PG_REPLICATION_PASSWORD:-postgres}"
+if [ -z "${PG_REPLICATION_PASSWORD:-}" ]; then
+  [ -n "${PG_PASSWORD:-}" ] || { echo "❌ PG_PASSWORD absent : impossible de dériver PG_REPLICATION_PASSWORD" >&2; exit 1; }
+  PG_REPLICATION_PASSWORD=$(printf '%s' "PG_REPLICATION_PASSWORD:$PG_PASSWORD" | sha256sum | cut -c1-32)
+fi
 
 # Réseaux autorisés déduits dynamiquement depuis l'IP de bdd1
 IP_BDD1=$(awk '/:nom: bdd1/ {found=1} found && /:ip:/ {print $2; found=0}' /vagrant/config/noeuds.yml | tr -d '\r"')
@@ -126,7 +131,7 @@ PORT_CLUSTER=$(pg_lsclusters -h | awk 'NR==1{print $3}')
 base_promue() {
   local p r
   for p in "${PORT_DB}" "${PORT_CLUSTER:-5432}" 5432; do
-    r=$(sudo -u postgres psql -p "$p" -d "${APP_DB}" -tAc "SELECT to_regclass('public.resultat') IS NOT NULL" 2>/dev/null || true)
+    r=$(sudo -u postgres psql -p "$p" -d "${APP_DB}" -tAc "SELECT to_regclass('public.resultats') IS NOT NULL" 2>/dev/null || true)
     [ "$r" = "t" ] && return 0
   done
   return 1
@@ -136,7 +141,7 @@ CLONE=0
 if [ -f "${DATADIR}/standby.signal" ] && [ "${REPLIQUE_RECLONER:-0}" != "1" ]; then
   echo "=> Ce serveur est déjà un réplica : pas de reclonage (REPLIQUE_RECLONER=1 pour forcer)."
 elif [ ! -f "${DATADIR}/standby.signal" ] && [ "${REPLIQUE_RECLONER:-0}" != "1" ] && base_promue; then
-  echo "⚠️  ${HOSTNAME} n'est plus un réplica (pas de standby.signal) mais contient la table resultat :"
+  echo "⚠️  ${HOSTNAME} n'est plus un réplica (pas de standby.signal) mais contient la table resultats :"
   echo "    il a sans doute été promu (bascule). Reclonage REFUSÉ pour ne pas détruire ses données."
   echo "    Pour le refaire réplica de l'ACTUEL primaire : REPLIQUE_RECLONER=1 vagrant provision ${HOSTNAME}"
   echo "    (le maître visé est lu dans noeuds.yml : bdd1). Aucune modification effectuée."
@@ -234,8 +239,8 @@ else
   echo "   ⚠️  WAL receiver : '${STATUT}' — voir : sudo journalctl -u ${UNITE} -n 50"
 fi
 
-NB=$(sudo -u postgres psql -p "${PORT_DB}" -d "${APP_DB}" -tAc "SELECT count(*) FROM resultat;" 2>/dev/null || echo "n/a")
-echo "   Lignes de la table 'resultat' répliquées : ${NB}"
+NB=$(sudo -u postgres psql -p "${PORT_DB}" -d "${APP_DB}" -tAc "SELECT count(*) FROM resultats;" 2>/dev/null || echo "n/a")
+echo "   Lignes de la table 'resultats' répliquées : ${NB}"
 
 echo "==================================================="
 echo "✅ Réplica prêt ! (lecture seule)"

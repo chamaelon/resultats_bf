@@ -139,7 +139,7 @@ function Wait-Serveurs([int]$N, [int]$TimeoutS = 120) {
 function Get-Matricule {
   $m = Get-Env 'MATRICULE' ''
   if (-not $m) {
-    $q = "sudo -u postgres psql -p $($script:PgPort) -d $($script:PgDb) -tAc 'SELECT matricule_candidat FROM resultat ORDER BY 1 LIMIT 1'"
+    $q = "sudo -u postgres psql -p $($script:PgPort) -d $($script:PgDb) -tAc 'SELECT matricule FROM resultats ORDER BY 1 LIMIT 1'"
     $m = ((Invoke-Vm 'bdd1' $q) -split "`n" | Select-Object -First 1).Trim()
   }
   return $m
@@ -241,7 +241,13 @@ Bloc 'Codes HTTP de /sante pendant tout le scénario' (Get-RepartitionTexte $e '
 
 Etape 'Vérifications après bascule'
 $rec = (Invoke-Vm 'bdd2' "$psql -tAc 'SELECT pg_is_in_recovery()'").Trim()
-$r = Get-Http "$($script:LbUrl)/resultat?matricule=$(Get-Matricule)" 4
+$matricule = (Invoke-Vm 'bdd2' "$psql -tAc 'SELECT matricule FROM resultats ORDER BY 1 LIMIT 1'").Trim()
+$r = [pscustomobject]@{ Code = 0 }
+if ($matricule) {
+  $r = Get-Http "$($script:LbUrl)/resultat?matricule=$([uri]::EscapeDataString($matricule))" 4
+} else {
+  Warn 'Aucun matricule trouvé sur bdd2 après la bascule'
+}
 Mesure 'bdd2 en mode réplica (pg_is_in_recovery)' "$rec   (attendu : f)"
 Mesure '/resultat via le répartiteur après bascule' "HTTP $($r.Code)"
 
@@ -256,4 +262,5 @@ Mesure 'Indisponibilité totale (aucun 200)' "$($a.GapS) s"
 Verdict ($d503 -ne '') $(if ($d503) { "/sante renvoie 503 $d503 s après la panne" } else { "/sante n'a jamais renvoyé 503" })
 Verdict ($brutes -eq 0) $(if ($brutes -eq 0) { 'Aucune erreur brute : uniquement 200 ou 503' } else { "$brutes réponse(s) ni 200 ni 503 (page blanche / connexion refusée ?)" })
 Verdict ($retour -and $rec -eq 'f') $(if ($retour -and $rec -eq 'f') { 'Bascule réussie : service rétabli sur bdd2' } else { "Bascule incomplète (retour 200 : $retour, bdd2 réplica : $rec)" })
+Verdict ($r.Code -eq 200) $(if ($r.Code -eq 200) { 'GET /resultat fonctionne sur les données de bdd2 promue' } else { "GET /resultat renvoie HTTP $($r.Code) après la bascule" })
 Rapport-Fin

@@ -116,7 +116,7 @@ IP_OBS=$(noeud_ip obs || true)
 
 PGDATABASE="${PG_DB:-${PGDATABASE:-postgres}}"
 PGUSER="${PG_USER:-postgres}"
-PGTABLE="resultat"  # Nom de la table principale (pour peuplement)
+PGTABLE="resultats"  # Table attendue par l'API et le sujet
 PG_REPLICATION_USER="${PG_REPLICATION_USER:-replicateur}"
 
 # Secrets : PG_PASSWORD obligatoire ; celui de la réplication est dérivé s'il manque
@@ -132,10 +132,12 @@ PORT_EXPORTER=9187
 # Schéma et données : premier fichier trouvé parmi les emplacements usuels
 trouver_fichier() { local f; for f in "$@"; do if [ -f "$f" ]; then echo "$f"; return 0; fi; done; return 1; }
 FICHIER_SCHEMA="${FICHIER_SCHEMA:-$(trouver_fichier \
+  /vagrant/app/database/schema.sql \
   /vagrant/app/api/database/schemas/resultats.sql /vagrant/app/api/database/schemas/schema.sql \
   /vagrant/app/database/schemas/resultats.sql /vagrant/app/database/schemas/schema.sql \
   /vagrant/schema.sql /vagrant/config/schema.sql || true)}"
 FICHIER_DONNEES="${FICHIER_DONNEES:-$(trouver_fichier \
+  /vagrant/app/database/data.sql \
   /vagrant/app/api/database/schemas/data.sql /vagrant/app/database/schemas/data.sql \
   /vagrant/data.sql /vagrant/config/data.sql || true)}"
 
